@@ -34,7 +34,7 @@ def ocr_core(img):
 # databases functions ----------------------------------------------------------------------------------
 def connect_db():
     config = configparser.ConfigParser()
-    config.read('config.cfg')
+    config.read('position.cfg')
 
     try:
         connection = mariadb.connect(
