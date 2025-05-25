@@ -1,0 +1,8 @@
+opencv-python
+numpy
+pytesseract
+Pillow
+pyautogui
+mariadb
+python-imagesearch
+screeninfo 
