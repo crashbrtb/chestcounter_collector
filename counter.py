@@ -3,10 +3,14 @@ import numpy
 import pytesseract
 from PIL import ImageGrab
 import pyautogui
-import mariadb
+import mysql.connector
 from python_imagesearch.imagesearch import imagesearch_region_numLoop
 import time
 import configparser
+import sys
+# Define a codificação padrão para UTF-8
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
 
 
 # Images capture, treatment and OCR functions ------------------------------------------------------------------------------------------------------
@@ -25,8 +29,17 @@ def remove_noise(img):
 def thresholding(img):
     return cv2.threshold( img, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1]
 
-def ocr_core(img):
-    text = pytesseract.image_to_string(img, lang='eng', config='--psm 12 --oem 1')
+def upscale_image(img, scale_percent=200):
+    width = int(img.shape[1] * scale_percent / 100)
+    height = int(img.shape[0] * scale_percent / 100)
+    dim = (width, height)
+    return cv2.resize(img, dim, interpolation = cv2.INTER_LINEAR)
+
+def ocr_core(img, lang='eng', psm=12, oem=1, whitelist=None):
+    config = f'--psm {psm} --oem {oem}'
+    if whitelist:
+        config += f' -c tessedit_char_whitelist={whitelist}'
+    text = pytesseract.image_to_string(img, lang=lang, config=config)
     text = text.replace("——", "")
     return text
 # Images capture, treatment and OCR functions ------------------------------------------------------------------------------------------------------
@@ -34,31 +47,40 @@ def ocr_core(img):
 # databases functions ----------------------------------------------------------------------------------
 def connect_db():
     config = configparser.ConfigParser()
-    config.read('config.cfg')
+    config.read('position.cfg')
 
     try:
-        connection = mariadb.connect(
+        connection = mysql.connector.connect(
             host=config.get('database', 'host'),
             user=config.get('database', 'user'),
             password=config.get('database', 'password'),
-            database=config.get('database', 'database')
+            database=config.get('database', 'database'),
+            charset="utf8mb4" # Apenas o parâmetro 'charset' é necessário
         )
         print("Successful connection to the database 'chestcounter'")
         return connection
-    except mariadb.Error as e:
-        print(f"Error connecting to MariaDB: {e}")
+    except mysql.connector.Error as e:  # <-- Alteração aqui!
+        print(f"Error connecting to MySQL: {e}")
         return None
-
 def insert_chest(connection, name, player, source):
     cursor = connection.cursor()
-    query = "INSERT INTO collected_chests (name, player, source) VALUES (?, ?, ?)"
-    values = (name, player, source)
     try:
+        # Check for player name mapping
+        query_map = "SELECT correct_name FROM player_name_mappings WHERE ocr_text = %s"
+        cursor.execute(query_map, (player,))
+        result = cursor.fetchone()
+        if result:
+            print(f"Player name '{player}' mapped to '{result[0]}'")
+            player = result[0]
+
+        # Insert into collected chests
+        query = "INSERT INTO collected_chests (name, player, source) VALUES (%s, %s, %s)"
+        values = (name, player, source)
         cursor.execute(query, values)
         connection.commit()
         print("Data successfully inserted into collected_chests table")
         return True
-    except mariadb.Error as e:
+    except mysql.connector.Error as e:
         print(f"Error inserting data: {e}")
         return None
     finally:
@@ -66,23 +88,40 @@ def insert_chest(connection, name, player, source):
 
 def insert_chest_error(connection, error_value):
     cursor = connection.cursor()
-    query = "INSERT INTO errors (error_value) VALUES (?)"
+    query = "INSERT INTO errors (error_value) VALUES (%s)"
     values = (error_value)
     try:
         cursor.execute(query, values)
         connection.commit()
         print("Data successfully inserted into errors table")
         return True
-    except mariadb.Error as e:
+    except mysql.connector.Error as e:
         print(f"Error inserting data: {e}")
         return None
     finally:
         cursor.close()
+        
+def insert_chest_incomplete(connection, name, player, source):
+    cursor = connection.cursor()
+    query = "INSERT INTO incomplete_chests (name, player, source) VALUES (%s, %s, %s)"
+    values = (name, player, source)
+    try:
+        cursor.execute(query, values)
+        connection.commit()
+        print("Data successfully inserted into incomplete_chests table")
+        return True
+    except mysql.connector.Error as e:
+        print(f"Error inserting data: {e}")
+        return False
+    finally:
+        cursor.close()
+        
 def chest_capture(area):
     image = get_screenshot(area)
     image = get_grayscale(image)
+    image = upscale_image(image, 200)
     image = thresholding(image)
-    text = ocr_core(image)
+    text = ocr_core(image, psm=6)
     raw_rows = text.split("\n")
     rows = list()
     # remove empty rows
@@ -95,15 +134,13 @@ def chest_capture(area):
 def find_splitter(text):
     splitter = False
     # check all since the OCR sometimes gets it wrong
-    if text.find(":") > -1 or text.find(",") > -1 or text.find(".") > -1 or text.find(",") > -1:
+    if text.find(":") > -1 or text.find(",") > -1 or text.find(".") > -1:
         if text.find(":") > -1:
             splitter = ":"
         elif text.find(",") > -1:
             splitter = ","
         elif text.find(".") > -1:
             splitter = "."
-        elif text.find(",") > -1:
-            splitter = ","
     if splitter == "":  # none of the above chars were found in the string
         splitter = False
     return splitter
@@ -114,35 +151,68 @@ def chest_colect(area):
     fp = chest_capture(area)
     try:
         chest = player = source = ""
-        chest = fp[0]
 
-        splitter = find_splitter(fp[1])
-        if (splitter != False):
-            split_player = fp[1].split(splitter, 1)
-            player = split_player[1].strip()
+        if len(fp) < 1:
+            print(f"Erro de OCR: Nenhuma informação detectada. Conteúdo: {fp}")
+            connection = connect_db()
+            if connection:
+                insert_chest_error(connection, "OCR_NO_DATA_DETECTED")
+                connection.close()
+                return 2
+            else:
+                return 0
+            
+        chest = fp[0] # Pelo menos o nome do baú deve existir
 
-        splitter = find_splitter(fp[2])
+        if len(fp) > 1:
+            splitter_player = find_splitter(fp[1])
+            if splitter_player:
+                split_player = fp[1].split(splitter_player, 1)
+                if len(split_player) > 1:
+                    player = split_player[1].strip()
+        else:
+            # fp[1] não existe, player permanecerá ""
+            print("Informação do jogador ausente ou não detectada separadamente.")
 
-        if (splitter != False):
-            split_source = fp[2].split(splitter, 1)
-            source = split_source[1].strip()
+        if len(fp) > 2:
+            splitter_source = find_splitter(fp[2])
+            if splitter_source:
+                split_source = fp[2].split(splitter_source, 1)
+                if len(split_source) > 1:
+                    source = split_source[1].strip()
+        else:
+            # fp[2] não existe, source permanecerá ""
+            print("Informação da fonte ausente ou não detectada separadamente.")
+
 
         if len(chest) > 0 and len(player) > 0 and len(source) > 0:
             connection = connect_db()
             if connection:
                 insert_chest(connection, chest, player, source)
                 connection.close()
-                return 1
+                return 1 # Sucesso
             else:
-                return 0
+                return 0 # Erro de DB
 
         else:
+            # Dados incompletos mesmo após tentativa de parse
+            print(f"Dados incompletos para inserção: Baú='{chest}', Jogador='{player}', Fonte='{source}'. Linhas originais: {fp}")
             connection = connect_db()
             if connection:
-                error_value = fp[0] + "-" + fp[1] + "-" + fp[2]
-                insert_chest_error(connection, error_value)
+                
+                # Construir uma string de erro mais detalhada com o que foi capturado
+                error_details = []
+                if fp: error_details.append(f"Linha1: {fp[0] if len(fp) > 0 else 'N/A'}")
+                if len(fp) > 1: error_details.append(f"Linha2: {fp[1]}")
+                if len(fp) > 2: error_details.append(f"Linha3: {fp[2]}")
+                # Adicionar mais linhas se fp puder ser maior
+                error_value = f"INCOMPLETE_PARSE_DATA: {' | '.join(error_details)}. Detectado: C='{chest}', P='{player}', S='{source}'"
+                #insert_chest_error(connection, error_value)
+                if(insert_chest_incomplete(connection, chest, player, source)):
+                    return 2
+                else:
+                    return 0
                 connection.close()
-                return 2
             else:
                 return 0
 
@@ -210,6 +280,12 @@ if __name__ == "__main__":
                 time.sleep(0.5)
                 counter = counter + 1
             elif (chest_colect(chest_area)==2):
+                pyautogui.click(cord_menu_button_open_chest[0] + pos[0] + 80, cord_menu_button_open_chest[1] + pos[1] + 20)
+                time.sleep(0.5)
                 counter_errors = counter_errors + 1
+            elif (chest_colect(chest_area)==0):
+                counter_errors = counter_errors + 1
+                break
+                
     print(counter_errors, " chests incorrects")
     print(counter, " chests collecteds")
