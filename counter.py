@@ -8,7 +8,7 @@ from python_imagesearch.imagesearch import imagesearch_region_numLoop
 import time
 import configparser
 import sys
-# Define a codificação padrão para UTF-8
+# Set default encoding to UTF-8
 sys.stdout.reconfigure(encoding='utf-8')
 sys.stderr.reconfigure(encoding='utf-8')
 
@@ -55,11 +55,11 @@ def connect_db():
             user=config.get('database', 'user'),
             password=config.get('database', 'password'),
             database=config.get('database', 'database'),
-            charset="utf8mb4" # Apenas o parâmetro 'charset' é necessário
+            charset="utf8mb4" # Only the 'charset' parameter is required
         )
         print("Successful connection to the database 'chestcounter'")
         return connection
-    except mysql.connector.Error as e:  # <-- Alteração aqui!
+    except mysql.connector.Error as e:  # <-- Change here!
         print(f"Error connecting to MySQL: {e}")
         return None
 def insert_chest(connection, name, player, source):
@@ -153,7 +153,7 @@ def chest_colect(area):
         chest = player = source = ""
 
         if len(fp) < 1:
-            print(f"Erro de OCR: Nenhuma informação detectada. Conteúdo: {fp}")
+            print(f"OCR error: No information detected. Content: {fp}")
             connection = connect_db()
             if connection:
                 insert_chest_error(connection, "OCR_NO_DATA_DETECTED")
@@ -162,7 +162,7 @@ def chest_colect(area):
             else:
                 return 0
             
-        chest = fp[0] # Pelo menos o nome do baú deve existir
+        chest = fp[0] # At least the chest name must exist
 
         if len(fp) > 1:
             splitter_player = find_splitter(fp[1])
@@ -171,8 +171,8 @@ def chest_colect(area):
                 if len(split_player) > 1:
                     player = split_player[1].strip()
         else:
-            # fp[1] não existe, player permanecerá ""
-            print("Informação do jogador ausente ou não detectada separadamente.")
+            # fp[1] does not exist, player will remain ""
+            print("Player information missing or not detected separately.")
 
         if len(fp) > 2:
             splitter_source = find_splitter(fp[2])
@@ -181,8 +181,8 @@ def chest_colect(area):
                 if len(split_source) > 1:
                     source = split_source[1].strip()
         else:
-            # fp[2] não existe, source permanecerá ""
-            print("Informação da fonte ausente ou não detectada separadamente.")
+            # fp[2] does not exist, source will remain ""
+            print("Source information missing or not detected separately.")
 
 
         if len(chest) > 0 and len(player) > 0 and len(source) > 0:
@@ -190,23 +190,23 @@ def chest_colect(area):
             if connection:
                 insert_chest(connection, chest, player, source)
                 connection.close()
-                return 1 # Sucesso
+                return 1 # success
             else:
-                return 0 # Erro de DB
+                return 0 # DB error
 
         else:
-            # Dados incompletos mesmo após tentativa de parse
-            print(f"Dados incompletos para inserção: Baú='{chest}', Jogador='{player}', Fonte='{source}'. Linhas originais: {fp}")
+            # Incomplete data even after parsing attempt
+            print(f"Incomplete data for insertion: Chest='{chest}', Player='{player}', Source='{source}'. Original lines: {fp}")
             connection = connect_db()
             if connection:
                 
-                # Construir uma string de erro mais detalhada com o que foi capturado
+                # Build a more detailed error string with what was captured
                 error_details = []
-                if fp: error_details.append(f"Linha1: {fp[0] if len(fp) > 0 else 'N/A'}")
-                if len(fp) > 1: error_details.append(f"Linha2: {fp[1]}")
-                if len(fp) > 2: error_details.append(f"Linha3: {fp[2]}")
-                # Adicionar mais linhas se fp puder ser maior
-                error_value = f"INCOMPLETE_PARSE_DATA: {' | '.join(error_details)}. Detectado: C='{chest}', P='{player}', S='{source}'"
+                if fp: error_details.append(f"Line1: {fp[0] if len(fp) > 0 else 'N/A'}")
+                if len(fp) > 1: error_details.append(f"Line2: {fp[1]}")
+                if len(fp) > 2: error_details.append(f"Line3: {fp[2]}")
+                # Add more lines if fp can be longer
+                error_value = f"INCOMPLETE_PARSE_DATA: {' | '.join(error_details)}. Detected: C='{chest}', P='{player}', S='{source}'"
                 #insert_chest_error(connection, error_value)
                 if(insert_chest_incomplete(connection, chest, player, source)):
                     return 2
@@ -217,7 +217,7 @@ def chest_colect(area):
                 return 0
 
     except Exception as e:
-        print(f"Ocorreu um erro: {e}")
+        print(f"An error occurred: {e}")
         print(fp)
         return False
 
@@ -241,15 +241,15 @@ if __name__ == "__main__":
     global_vars = {}
     with open('position.cfg', 'r') as f:
         for line in f:
-            if line.strip():  # Ignora linhas vazias
+            if line.strip():  # Ignore empty lines
                 if line.startswith('['):
                     print("") #just to ignore name of section
                 else:
                     var, value = line.split('=')
-                    var = var.strip()  # Remove espaços em branco antes e depois do nome da variável
-                    value = value.strip()  # Remove espaços em branco antes e depois do valor
+                    var = var.strip()  # Remove whitespace before and after the variable name
+                    value = value.strip()  # Remove whitespace before and after the value
 
-                    # Convert value (int, tuple ou str)
+                    # Convert value (int, tuple or str)
                     if value.isdigit():
                         value = int(value)
                     elif value.startswith('(') and value.endswith(')'):
