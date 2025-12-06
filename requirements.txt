@@ -5,4 +5,5 @@ Pillow
 pyautogui
 mariadb
 python-imagesearch
-screeninfo 
+screeninfo
+mysql-connector-python
