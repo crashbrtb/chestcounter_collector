@@ -12,12 +12,6 @@ call C:\chestcounter\venv\Scripts\activate.bat >> "%logfile%"
 
 echo **Starting script opentb** >> "%logfile%"
 
-%WINPY_DIR%\python C:\chestcounter\opentb.py >> "%logfile%"
-
 echo **Starting script counter.py** >> "%logfile%"
 
 %WINPY_DIR%\python C:\chestcounter\counter.py >> "%logfile%" 
-
-echo **Starting script closetb** >> "%logfile%"
-
-%WINPY_DIR%\python C:\chestcounter\closetb.py >> "%logfile%"
