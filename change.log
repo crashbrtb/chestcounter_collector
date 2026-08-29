@@ -1,2 +1,16 @@
 0.1 - initial release
 0.2 - add multiple accounts support
+1.5.0 - Architectural refactoring and new features:
+  - Architecture: Complete modular redesign separating Core (Vision, OCR, Window Manager, Bot Controller, Game State), Database (Connection Manager, Repositories), Config, and Feature Modules.
+  - Triumphal Gifts Support: Automatic multi-tab gift collection supporting both standard 'Gifts' and 'Triumphal Gifts' tabs.
+  - Robust Account Switcher: Full-line and token pair OCR matching algorithm with fuzzy similarity scoring (resolving ambiguities between accounts like 'Crash BR' and 'Cash BR').
+  - Advanced Game State Handling: Automated store popup detection and dismissal with polling (wait_and_close_store) and safe modal closure before switching profiles.
+  - Active Profile Verification: High-accuracy active player banner reader supporting light/gold fonts on dark backgrounds via inverted Otsu binarization.
+  - Journal & Event Score Base: New JournalParser module and JournalRepository for upcoming event score tracking and leaderboard analysis.
+  - Chat Automation Base: New ChatAutomator module supporting UTF-8 clipboard pasting for broadcast announcements, accents, and emojis.
+  - Structured Logging & CLI: Daily rotating logs in execution_logs/ and command-line interface in main.py supporting selective execution by account or module.
+1.5.1 - Performance optimization and account navigation fixes:
+  - High-Speed Chest Collection: Optimized image processing pipeline and reduced click latency (<0.25s), bringing per-chest collection time down from ~6s to under 0.5s.
+  - Account List Scroll & Navigation: Fixed account switcher logic to guarantee top-scrolling on open, preventing premature menu closure and enabling seamless multi-view scrolling.
+  - Config Clean-Up: Removed obsolete and unused variables from position.cfg and position model.cfg (open_button, switch_progress_name_area, counter_university, etc.).
+  - Automated Setup & Dependencies: Updated install.bat to dynamically resolve relative paths, auto-detect host Python, and refreshed requirements.txt with all required packages (pyperclip, pywin32, pytesseract).

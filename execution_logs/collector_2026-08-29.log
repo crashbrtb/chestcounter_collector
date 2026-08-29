@@ -1,0 +1,262 @@
+[2026-08-29 00:23:09] [INFO   ] [TBCollector] RapidOCR neural engine initialized successfully.
+[2026-08-29 00:24:45] [INFO   ] [TBCollector] Starting Total Battle Collector at 2026-08-29 00:24:45
+[2026-08-29 00:24:45] [INFO   ] [TBCollector] RapidOCR neural engine initialized successfully.
+[2026-08-29 00:24:45] [INFO   ] [TBCollector] Checking if Total Battle is already running...
+[2026-08-29 00:24:45] [INFO   ] [TBCollector] Total Battle is not open. Attempting to launch...
+[2026-08-29 00:24:45] [INFO   ] [TBCollector] Starting Total Battle Launcher...
+[2026-08-29 00:24:46] [INFO   ] [TBCollector] Waiting 20.0s for launcher to start...
+[2026-08-29 00:25:07] [INFO   ] [TBCollector] Window 'MainWindow' activated and maximized.
+[2026-08-29 00:25:07] [INFO   ] [TBCollector] Clicking Play button at (934, 789)...
+[2026-08-29 00:25:23] [INFO   ] [TBCollector] Window 'Total Battle' activated and maximized.
+[2026-08-29 00:25:23] [INFO   ] [TBCollector] Waiting up to 15.0s to detect and close any store popups...
+[2026-08-29 00:25:23] [INFO   ] [TBCollector] Store screen detected. Looking for 'X' button to close it...
+[2026-08-29 00:25:25] [INFO   ] [TBCollector] Store popup closed by clicking 'X' at (1870, 118).
+[2026-08-29 00:25:26] [INFO   ] [TBCollector] === Starting Account #1 [account_main]: 'Crash BR' ===
+[2026-08-29 00:25:26] [INFO   ] [TBCollector] Ensuring clean main screen state (closing any open modals)...
+[2026-08-29 00:25:27] [INFO   ] [TBCollector] Waiting up to 6.0s to detect and close any store popups...
+[2026-08-29 00:25:40] [INFO   ] [TBCollector] Checking active account in area (711, 106, 931, 126) -> Detected: 'CashBR' (Clean: 'cashbr'), Target: 'Crash BR' (Clean: 'crash br')
+[2026-08-29 00:25:40] [INFO   ] [TBCollector] Account 'Crash BR' active check: False
+[2026-08-29 00:25:40] [INFO   ] [TBCollector] Attempt #1 to select account 'Crash BR'
+[2026-08-29 00:25:40] [INFO   ] [TBCollector] Opening Account Menu at (1700, 54)...
+[2026-08-29 00:25:54] [INFO   ] [TBCollector] Account 'Crash BR' found -> matched 'Crash BR' (Score: 1.00) at (880, 555).
+[2026-08-29 00:25:54] [INFO   ] [TBCollector] Clicking account entry at (880, 555)...
+[2026-08-29 00:25:58] [INFO   ] [TBCollector] Clicked progress confirmation button at (1058, 644).
+[2026-08-29 00:25:58] [INFO   ] [TBCollector] Waiting 20.0s for account switch to complete...
+[2026-08-29 00:26:19] [INFO   ] [TBCollector] Window 'Total Battle' activated and maximized.
+[2026-08-29 00:26:19] [INFO   ] [TBCollector] Waiting up to 15.0s to detect and close any store popups...
+[2026-08-29 00:26:19] [INFO   ] [TBCollector] Store screen detected. Looking for 'X' button to close it...
+[2026-08-29 00:26:21] [INFO   ] [TBCollector] Store popup closed by clicking 'X' at (1870, 118).
+[2026-08-29 00:26:25] [INFO   ] [TBCollector] Checking active account in area (711, 106, 931, 126) -> Detected: 'CrashBR' (Clean: 'crashbr'), Target: 'Crash BR' (Clean: 'crash br')
+[2026-08-29 00:26:25] [INFO   ] [TBCollector] Account 'Crash BR' active check: True
+[2026-08-29 00:26:26] [INFO   ] [TBCollector] Connecting to database for account 'Crash BR'...
+[2026-08-29 00:26:27] [INFO   ] [TBCollector] Successfully connected to database 'chestcounter' for account 'Crash BR'.
+[2026-08-29 00:26:27] [INFO   ] [TBCollector] Opening Clan Gifts menu...
+[2026-08-29 00:26:30] [INFO   ] [TBCollector] Clan Gifts menu opened.
+[2026-08-29 00:26:30] [INFO   ] [TBCollector] Beginning chest collection loop in tab: 'Gifts'...
+[2026-08-29 00:26:38] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'MeraP Putih', Source: 'Level35epicCrypt'
+[2026-08-29 00:26:43] [INFO   ] [TBCollector] Chest collected -> Name: 'HarpyChest', Player: 'MeraP Putih', Source: 'Level35epicCrypt'
+[2026-08-29 00:26:49] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'MeraP Putih', Source: 'Level30epicCrypt'
+[2026-08-29 00:26:55] [INFO   ] [TBCollector] Chest collected -> Name: 'HarpyChest', Player: 'MeraP Putih', Source: 'Level35epicCrypt'
+[2026-08-29 00:27:01] [INFO   ] [TBCollector] Chest collected -> Name: 'HarpyChest', Player: 'MeraP Putih', Source: 'Level35epicCrypt'
+[2026-08-29 00:27:07] [INFO   ] [TBCollector] Chest collected -> Name: 'HarpyChest', Player: 'MeraP Putih', Source: 'Level35epicCrypt'
+[2026-08-29 00:27:14] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level30rare Crypt'
+[2026-08-29 00:27:20] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level30rare Crypt'
+[2026-08-29 00:27:21] [INFO   ] [TBCollector] No more 'Open' buttons detected in tab 'Gifts'.
+[2026-08-29 00:27:21] [INFO   ] [TBCollector] Tab 'Gifts' finished: 8 collected, 0 incomplete.
+[2026-08-29 00:27:21] [INFO   ] [TBCollector] Switching to 'Triumphal Gifts' tab...
+[2026-08-29 00:27:30] [WARNING] [TBCollector] Account 'Triumphal' not found in accounts view. (Best was: 'Capitol', 0.25)
+[2026-08-29 00:27:31] [INFO   ] [TBCollector] Clicked 'Triumphal Gifts' tab at (1055, 285).
+[2026-08-29 00:27:31] [INFO   ] [TBCollector] Beginning chest collection loop in tab: 'Triumphal Gifts'...
+[2026-08-29 00:27:31] [INFO   ] [TBCollector] No more 'Open' buttons detected in tab 'Triumphal Gifts'.
+[2026-08-29 00:27:31] [INFO   ] [TBCollector] Tab 'Triumphal Gifts' finished: 0 collected, 0 incomplete.
+[2026-08-29 00:27:31] [INFO   ] [TBCollector] Switching back to standard 'Gifts' tab...
+[2026-08-29 00:27:33] [INFO   ] [TBCollector] Database connection closed for 'Crash BR'.
+[2026-08-29 00:27:33] [INFO   ] [TBCollector] Summary for 'Crash BR': 8 total chests collected (8 Gifts + 0 Triumphal Gifts), 0 incomplete/errors.
+[2026-08-29 00:27:33] [INFO   ] [TBCollector] Completed collection for 'Crash BR'.
+[2026-08-29 00:27:33] [INFO   ] [TBCollector] === Starting Account #2 [account_university]: 'Cash BR' ===
+[2026-08-29 00:27:33] [INFO   ] [TBCollector] Ensuring clean main screen state (closing any open modals)...
+[2026-08-29 00:27:34] [INFO   ] [TBCollector] Waiting up to 6.0s to detect and close any store popups...
+[2026-08-29 00:27:43] [INFO   ] [TBCollector] Checking active account in area (711, 106, 931, 126) -> Detected: 'Oildloi iimpui L CiialAucOi' (Clean: 'oildloi iimpui l ciialaucoi'), Target: 'Cash BR' (Clean: 'cash br')
+[2026-08-29 00:27:43] [INFO   ] [TBCollector] Account 'Cash BR' active check: False
+[2026-08-29 00:27:43] [INFO   ] [TBCollector] Attempt #1 to select account 'Cash BR'
+[2026-08-29 00:27:43] [INFO   ] [TBCollector] Opening Account Menu at (1700, 54)...
+[2026-08-29 00:27:58] [WARNING] [TBCollector] Account 'Cash BR' not found in accounts view. (Best was: '<>TestRapidocrParser', 0.30)
+[2026-08-29 00:27:58] [INFO   ] [TBCollector] Account 'Cash BR' not found in current view.
+[2026-08-29 00:27:58] [INFO   ] [TBCollector] Scrolling down accounts list...
+[2026-08-29 00:28:01] [INFO   ] [TBCollector] Attempt #2 to select account 'Cash BR'
+[2026-08-29 00:28:01] [INFO   ] [TBCollector] Opening Account Menu at (1700, 54)...
+[2026-08-29 00:28:12] [WARNING] [TBCollector] Account 'Cash BR' not found in accounts view. (Best was: 'CREATESEASONALPROGRESS', 0.28)
+[2026-08-29 00:28:12] [INFO   ] [TBCollector] Account 'Cash BR' not found in current view.
+[2026-08-29 00:28:12] [ERROR  ] [TBCollector] Account 'Cash BR' not found after scrolling.
+[2026-08-29 00:28:12] [ERROR  ] [TBCollector] Could not switch to account 'Cash BR'. Skipping to next.
+[2026-08-29 00:28:12] [INFO   ] [TBCollector] ==================================================
+[2026-08-29 00:28:12] [INFO   ] [TBCollector] ALL ACCOUNTS FINISHED: 8 collected, 0 incomplete/errors.
+[2026-08-29 00:28:12] [INFO   ] [TBCollector] ==================================================
+[2026-08-29 00:28:12] [INFO   ] [TBCollector] Window 'Total Battle' closed.
+[2026-08-29 00:28:12] [INFO   ] [TBCollector] Game closed.
+[2026-08-29 00:28:12] [INFO   ] [TBCollector] Execution finished at 2026-08-29 00:28:12 (Duration: 0:03:27.617736)
+[2026-08-29 00:35:43] [INFO   ] [TBCollector] Starting Total Battle Collector at 2026-08-29 00:35:43
+[2026-08-29 00:35:43] [INFO   ] [TBCollector] Checking if Total Battle is already running...
+[2026-08-29 00:35:43] [INFO   ] [TBCollector] Total Battle is not open. Attempting to launch...
+[2026-08-29 00:35:43] [INFO   ] [TBCollector] Starting Total Battle Launcher...
+[2026-08-29 00:35:44] [INFO   ] [TBCollector] Waiting 20.0s for launcher to start...
+[2026-08-29 00:36:05] [INFO   ] [TBCollector] Window 'MainWindow' activated and maximized.
+[2026-08-29 00:36:05] [INFO   ] [TBCollector] Clicking Play button at (934, 789)...
+[2026-08-29 00:36:20] [INFO   ] [TBCollector] Window 'Total Battle' activated and maximized.
+[2026-08-29 00:36:20] [INFO   ] [TBCollector] Waiting up to 15.0s to detect and close any store popups...
+[2026-08-29 00:36:20] [INFO   ] [TBCollector] Store screen detected. Looking for 'X' button to close it...
+[2026-08-29 00:36:23] [INFO   ] [TBCollector] Store popup closed by clicking 'X' at (1870, 118).
+[2026-08-29 00:36:24] [INFO   ] [TBCollector] === Starting Account #1 [account_main]: 'Crash BR' ===
+[2026-08-29 00:36:24] [INFO   ] [TBCollector] Ensuring clean main screen state (closing any open modals)...
+[2026-08-29 00:36:25] [INFO   ] [TBCollector] Waiting up to 6.0s to detect and close any store popups...
+[2026-08-29 00:36:31] [INFO   ] [TBCollector] Checking active account in area (711, 106, 931, 126) -> Detected: '| Crash BR' (Clean: '| crash br'), Target: 'Crash BR' (Clean: 'crash br')
+[2026-08-29 00:36:31] [INFO   ] [TBCollector] Account 'Crash BR' active check: True
+[2026-08-29 00:36:31] [INFO   ] [TBCollector] Account 'Crash BR' is already active. Skipping selection.
+[2026-08-29 00:36:32] [INFO   ] [TBCollector] Checking active account in area (711, 106, 931, 126) -> Detected: '| Crash BR' (Clean: '| crash br'), Target: 'Crash BR' (Clean: 'crash br')
+[2026-08-29 00:36:32] [INFO   ] [TBCollector] Account 'Crash BR' active check: True
+[2026-08-29 00:36:32] [INFO   ] [TBCollector] Connecting to database for account 'Crash BR'...
+[2026-08-29 00:36:32] [INFO   ] [TBCollector] Successfully connected to database 'chestcounter' for account 'Crash BR'.
+[2026-08-29 00:36:32] [INFO   ] [TBCollector] Opening Clan Gifts menu...
+[2026-08-29 00:36:35] [INFO   ] [TBCollector] Clan Gifts menu opened.
+[2026-08-29 00:36:35] [INFO   ] [TBCollector] Beginning chest collection loop in tab: 'Gifts'...
+[2026-08-29 00:36:35] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:36] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:36:36] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:37] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:38] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:36:38] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:39] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:36:40] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:40] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:41] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:36:42] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:42] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:36:43] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:44] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:36:44] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:45] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:46] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:36:46] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:36:47] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:48] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:36:48] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:49] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:50] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:36:50] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:51] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:36:52] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:52] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:53] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:54] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:36:54] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:55] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:36:56] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:56] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:57] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:36:58] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:36:58] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:36:59] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:00] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:00] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:01] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:02] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:02] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:03] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:04] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:04] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:05] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:06] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:06] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:07] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:08] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:08] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:09] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:10] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:10] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:11] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:12] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:12] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:13] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:14] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:14] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:15] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:16] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:16] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:17] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:18] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:18] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:19] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:20] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:20] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:21] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:22] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:22] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:23] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:24] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:24] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:25] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:26] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Fallen Angel', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:26] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:27] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:28] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:28] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:29] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:30] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 30 epic Crypt'
+[2026-08-29 00:37:30] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 30 epic Crypt'
+[2026-08-29 00:37:31] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:32] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:32] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 30 epic Crypt'
+[2026-08-29 00:37:33] [INFO   ] [TBCollector] Chest collected -> Name: 'Ancient Warrior's Chest', Player: 'Fallen Angel', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:37:34] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 30 epic Crypt'
+[2026-08-29 00:37:34] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:35] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:36] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 30 epic Crypt'
+[2026-08-29 00:37:36] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 30 epic Crypt'
+[2026-08-29 00:37:37] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:38] [INFO   ] [TBCollector] Chest collected -> Name: 'Rare Dragon Chest', Player: 'Jaka', Source: 'Level 30 rare Crypt'
+[2026-08-29 00:37:38] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'Mera Putih', Source: 'Level 30 epic Crypt'
+[2026-08-29 00:37:39] [INFO   ] [TBCollector] No more 'Open' buttons detected in tab 'Gifts'.
+[2026-08-29 00:37:39] [INFO   ] [TBCollector] Tab 'Gifts' finished: 96 collected, 0 incomplete.
+[2026-08-29 00:37:39] [INFO   ] [TBCollector] Switching to 'Triumphal Gifts' tab at (1055, 285)...
+[2026-08-29 00:37:40] [INFO   ] [TBCollector] Beginning chest collection loop in tab: 'Triumphal Gifts'...
+[2026-08-29 00:37:40] [INFO   ] [TBCollector] No more 'Open' buttons detected in tab 'Triumphal Gifts'.
+[2026-08-29 00:37:40] [INFO   ] [TBCollector] Tab 'Triumphal Gifts' finished: 0 collected, 0 incomplete.
+[2026-08-29 00:37:40] [INFO   ] [TBCollector] Switching back to standard 'Gifts' tab at (805, 285)...
+[2026-08-29 00:37:41] [INFO   ] [TBCollector] Database connection closed for 'Crash BR'.
+[2026-08-29 00:37:41] [INFO   ] [TBCollector] Summary for 'Crash BR': 96 total chests collected (96 Gifts + 0 Triumphal Gifts), 0 incomplete/errors.
+[2026-08-29 00:37:41] [INFO   ] [TBCollector] Completed collection for 'Crash BR'.
+[2026-08-29 00:37:41] [INFO   ] [TBCollector] === Starting Account #2 [account_university]: 'Cash BR' ===
+[2026-08-29 00:37:41] [INFO   ] [TBCollector] Ensuring clean main screen state (closing any open modals)...
+[2026-08-29 00:37:42] [INFO   ] [TBCollector] Waiting up to 6.0s to detect and close any store popups...
+[2026-08-29 00:37:49] [INFO   ] [TBCollector] Checking active account in area (711, 106, 931, 126) -> Detected: '| Crash BR' (Clean: '| crash br'), Target: 'Cash BR' (Clean: 'cash br')
+[2026-08-29 00:37:49] [INFO   ] [TBCollector] Account 'Cash BR' active check: False
+[2026-08-29 00:37:49] [INFO   ] [TBCollector] Opening Account Menu at (1700, 54)...
+[2026-08-29 00:37:50] [INFO   ] [TBCollector] Ensuring accounts list is scrolled to the top...
+[2026-08-29 00:37:53] [INFO   ] [TBCollector] Searching account list (View #1) for 'Cash BR'...
+[2026-08-29 00:37:53] [INFO   ] [TBCollector] Account 'Cash BR' found -> matched 'cash br' (Score: 1.00) at (879, 554).
+[2026-08-29 00:37:53] [INFO   ] [TBCollector] Clicking account entry at (879, 554)...
+[2026-08-29 00:37:57] [INFO   ] [TBCollector] Clicked progress confirmation button at (1058, 644).
+[2026-08-29 00:37:57] [INFO   ] [TBCollector] Waiting 20.0s for account switch to complete...
+[2026-08-29 00:38:18] [INFO   ] [TBCollector] Window 'Total Battle' activated and maximized.
+[2026-08-29 00:38:18] [INFO   ] [TBCollector] Waiting up to 15.0s to detect and close any store popups...
+[2026-08-29 00:38:18] [INFO   ] [TBCollector] Store screen detected. Looking for 'X' button to close it...
+[2026-08-29 00:38:20] [INFO   ] [TBCollector] Store popup closed by clicking 'X' at (1870, 118).
+[2026-08-29 00:38:21] [INFO   ] [TBCollector] Checking active account in area (711, 106, 931, 126) -> Detected: '| Cash BR' (Clean: '| cash br'), Target: 'Cash BR' (Clean: 'cash br')
+[2026-08-29 00:38:21] [INFO   ] [TBCollector] Account 'Cash BR' active check: True
+[2026-08-29 00:38:21] [INFO   ] [TBCollector] Connecting to database for account 'Cash BR'...
+[2026-08-29 00:38:22] [INFO   ] [TBCollector] Successfully connected to database 'chestcounteruni' for account 'Cash BR'.
+[2026-08-29 00:38:22] [INFO   ] [TBCollector] Opening Clan Gifts menu...
+[2026-08-29 00:38:24] [INFO   ] [TBCollector] Clan Gifts menu opened.
+[2026-08-29 00:38:24] [INFO   ] [TBCollector] Beginning chest collection loop in tab: 'Gifts'...
+[2026-08-29 00:38:25] [INFO   ] [TBCollector] Chest collected -> Name: 'Harpy Chest', Player: 'LINDA', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:38:25] [INFO   ] [TBCollector] Chest collected -> Name: 'Abandoned Chest', Player: 'LINDA', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:38:26] [INFO   ] [TBCollector] Chest collected -> Name: 'Cobalt Chest', Player: 'LINDA', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:38:27] [INFO   ] [TBCollector] Chest collected -> Name: 'Chest of the Cursed', Player: 'LINDA', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:38:27] [INFO   ] [TBCollector] Chest collected -> Name: 'Cobalt Chest', Player: 'LINDA', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:38:28] [INFO   ] [TBCollector] Chest collected -> Name: 'Cobalt Chest', Player: 'LINDA', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:38:29] [INFO   ] [TBCollector] Chest collected -> Name: 'Chest of the Cursed', Player: 'LINDA', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:38:29] [INFO   ] [TBCollector] Chest collected -> Name: 'Priest’s Chest', Player: 'LINDA', Source: 'Level 35 epic Crypt'
+[2026-08-29 00:38:30] [INFO   ] [TBCollector] Chest collected -> Name: 'Scorpion Chest', Player: 'LINDA', Source: 'Level 25 epic Crypt'
+[2026-08-29 00:38:31] [INFO   ] [TBCollector] Chest collected -> Name: 'Scorpion Chest', Player: 'LINDA', Source: 'Level 25 epic Crypt'
+[2026-08-29 00:38:31] [INFO   ] [TBCollector] Chest collected -> Name: 'House of Horrors Chest', Player: 'LINDA', Source: 'Level 25 epic Crypt'
+[2026-08-29 00:38:32] [INFO   ] [TBCollector] Chest collected -> Name: 'Elven Citadel Chest', Player: 'SIRIUS', Source: 'Level 30 Citadel'
+[2026-08-29 00:38:33] [INFO   ] [TBCollector] Chest collected -> Name: 'Elven Citadel Chest', Player: 'SIRIUS', Source: 'Level 30 Citadel'
+[2026-08-29 00:38:34] [INFO   ] [TBCollector] Chest collected -> Name: 'Elven Citadel Chest', Player: 'SIRIUS', Source: 'Level 30 Citadel'
+[2026-08-29 00:38:34] [INFO   ] [TBCollector] Chest collected -> Name: 'Elven Citadel Chest', Player: 'SIRIUS', Source: 'Level 30 Citadel'
+[2026-08-29 00:38:35] [INFO   ] [TBCollector] Chest collected -> Name: 'Elven Citadel Chest', Player: 'SIRIUS', Source: 'Level 30 Citadel'
+[2026-08-29 00:38:36] [INFO   ] [TBCollector] No more 'Open' buttons detected in tab 'Gifts'.
+[2026-08-29 00:38:36] [INFO   ] [TBCollector] Tab 'Gifts' finished: 16 collected, 0 incomplete.
+[2026-08-29 00:38:36] [INFO   ] [TBCollector] Switching to 'Triumphal Gifts' tab at (1055, 285)...
+[2026-08-29 00:38:37] [INFO   ] [TBCollector] Beginning chest collection loop in tab: 'Triumphal Gifts'...
+[2026-08-29 00:38:37] [INFO   ] [TBCollector] No more 'Open' buttons detected in tab 'Triumphal Gifts'.
+[2026-08-29 00:38:37] [INFO   ] [TBCollector] Tab 'Triumphal Gifts' finished: 0 collected, 0 incomplete.
+[2026-08-29 00:38:37] [INFO   ] [TBCollector] Switching back to standard 'Gifts' tab at (805, 285)...
+[2026-08-29 00:38:38] [INFO   ] [TBCollector] Database connection closed for 'Cash BR'.
+[2026-08-29 00:38:38] [INFO   ] [TBCollector] Summary for 'Cash BR': 16 total chests collected (16 Gifts + 0 Triumphal Gifts), 0 incomplete/errors.
+[2026-08-29 00:38:38] [INFO   ] [TBCollector] Completed collection for 'Cash BR'.
+[2026-08-29 00:38:38] [INFO   ] [TBCollector] ==================================================
+[2026-08-29 00:38:38] [INFO   ] [TBCollector] ALL ACCOUNTS FINISHED: 112 collected, 0 incomplete/errors.
+[2026-08-29 00:38:38] [INFO   ] [TBCollector] ==================================================
+[2026-08-29 00:38:38] [INFO   ] [TBCollector] Window 'Total Battle' closed.
+[2026-08-29 00:38:38] [INFO   ] [TBCollector] Game closed.
+[2026-08-29 00:38:38] [INFO   ] [TBCollector] Execution finished at 2026-08-29 00:38:38 (Duration: 0:02:54.918815)

@@ -3,7 +3,7 @@ numpy
 pytesseract
 Pillow
 pyautogui
-mariadb
-python-imagesearch
-screeninfo
+pyperclip
 mysql-connector-python
+screeninfo
+pywin32
