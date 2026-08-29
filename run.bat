@@ -1,17 +1,22 @@
-REM **Create log file**
+@echo off
+REM **Get Date and Time for log file name**
 for /f "tokens=2 delims==" %%a in ('wmic OS Get LocalDateTime /VALUE ^| findstr LocalDateTime') do set "datahora=%%a"
-set "data=%data:~0,4%-%data:~4,2%-%data:~6,2%"
-set "logfile=C:\chestcounter\execution_logs\log_%datahora:~0,4%-%datahora:~4,2%-%datahora:~6,2%_%datahora:~8,2%-%datahora:~10,2%-%datahora:~12,2%.txt"
-set "WINPY_DIR=python"
-REM **Create log file**
+set "data=%datahora:~0,4%-%datahora:~4,2%-%datahora:~6,2%"
+set "hora=%datahora:~8,2%-%datahora:~10,2%-%datahora:~12,2%"
+set "logfile=C:\chestcounter\execution_logs\log_%data%_%hora%.txt"
 
-echo **Entering relative path** >> "%logfile%"
-cd \chestcounter
+REM **Define Python Path for VENV (Important!)**
+set "VENV_PYTHON_EXE=C:\chestcounter\venv\Scripts\python.exe"
 
-call C:\chestcounter\venv\Scripts\activate.bat >> "%logfile%"
+REM **Enter relative path**
+echo Entering directory C:\chestcounter >> "%logfile%"
+cd /d C:\chestcounter
 
-echo **Starting script opentb** >> "%logfile%"
+REM **Execute script using the VENV interpreter**
+echo Starting script counter.py using VENV >> "%logfile%"
 
-echo **Starting script counter.py** >> "%logfile%"
+:: O 'call activate.bat' não é necessário se você chamar o executável diretamente.
+:: Vamos chamar o Python do VENV diretamente e redirecionar a saída e erros para o log.
+%VENV_PYTHON_EXE% C:\chestcounter\counter.py 1>>"%logfile%" 2>>&1
 
-%WINPY_DIR%\python C:\chestcounter\counter.py >> "%logfile%" 
+echo Script execution finished. >> "%logfile%"

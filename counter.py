@@ -295,11 +295,13 @@ def chest_collect(area, connection):
 
 
         if len(chest) > 0 and len(player) > 0 and len(source) > 0:
-            if connection:
-                insert_chest(connection, chest, player, source)
+            if insert_chest(connection, chest, player, source):
+                print(f"Successfully inserted chest: Chest='{chest}', Player='{player}', Source='{source}'. Original lines: {fp}")
                 return 1 # success
             else:
                 return 0 # DB error
+                print(f"Error trying to insert chest: Chest='{chest}', Player='{player}', Source='{source}'. Original lines: {fp}")
+
 
         else:
             # Incomplete data even after parsing attempt
@@ -589,10 +591,11 @@ if __name__ == "__main__":
                     close_game(window_title)
                     sys.exit(1)
         print("End of collection for all accounts")
-        #close_game(window_title)
-        #print("Game closed")
+        close_game(window_title)
+        print("Game closed")
         print("--------------------------------")
         print("Chest collection finished at: " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+        
     else:
         print("Error01! Game not opened")
         sys.exit(1)   
