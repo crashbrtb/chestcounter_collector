@@ -42,11 +42,22 @@ try:
 except ImportError:
     HAS_TESSERACT = False
 
+# RapidOCR changed package name. 'rapidocr-onnxruntime' was capped at
+# Requires-Python <3.13 and stopped at 1.4.4, so from 3.13 on the engine only
+# exists under the plain 'rapidocr' name. The two speak different dialects - the
+# old call returns (triples, elapsed), the new one a RapidOCROutput - so which
+# one answered is remembered here and the difference is absorbed below.
+RAPIDOCR_API = ""
 try:
-    from rapidocr_onnxruntime import RapidOCR
-    HAS_RAPIDOCR = True
+    from rapidocr import RapidOCR
+    RAPIDOCR_API = "v3"
 except ImportError:
-    HAS_RAPIDOCR = False
+    try:
+        from rapidocr_onnxruntime import RapidOCR
+        RAPIDOCR_API = "legacy"
+    except ImportError:
+        pass
+HAS_RAPIDOCR = bool(RAPIDOCR_API)
 
 from utils.logger import logger
 from utils.text_utils import (alphanumeric_key, best_match, clean_ocr_text, match_score,
@@ -90,31 +101,79 @@ class RapidOCRBackend:
     @staticmethod
     def available() -> Tuple[bool, str]:
         if not HAS_RAPIDOCR:
-            return False, "'rapidocr-onnxruntime' package not installed"
+            return False, "'rapidocr' package not installed"
         return True, "RapidOCR (PaddleOCR/ONNX)"
+
+    # Where the current dialect takes the thread count: one nested key per
+    # pipeline stage, against the single constructor argument the old one took.
+    _THREAD_KEYS = ("Det.engine_cfg.onnxruntime.intra_op_num_threads",
+                    "Cls.engine_cfg.onnxruntime.intra_op_num_threads",
+                    "Rec.engine_cfg.onnxruntime.intra_op_num_threads")
 
     def _get_engine(self):
         if self._engine is None:
             logger.debug(f"Loading RapidOCR models ({self.threads} threads)...")
-            try:
-                self._engine = RapidOCR(intra_op_num_threads=self.threads)
-            except TypeError:
-                # Older builds do not accept the threading argument.
-                self._engine = RapidOCR()
+            self._engine = self._build_engine()
         return self._engine
+
+    def _build_engine(self):
+        """
+        The engine, tuned where the build allows it and plain where it does not.
+
+        The thread count is a speed setting, not a correctness one, so a build
+        that rejects these keys is worth falling back on rather than failing the
+        run: a slower read still credits the chest to the right player.
+        """
+        if RAPIDOCR_API == "v3":
+            try:
+                return RapidOCR(params={key: self.threads for key in self._THREAD_KEYS})
+            except Exception as exc:
+                logger.debug(f"RapidOCR did not accept the thread settings ({exc}); "
+                             f"using its own defaults.")
+                return RapidOCR()
+        try:
+            return RapidOCR(intra_op_num_threads=self.threads)
+        except TypeError:
+            # Older builds do not accept the threading argument.
+            return RapidOCR()
+
+    @staticmethod
+    def _triples(raw) -> List[Tuple[Any, str, float]]:
+        """
+        (box, text, score) triples, whichever dialect produced them.
+
+        The old package returned the triples themselves alongside an elapsed
+        time; the current one returns an object carrying three parallel
+        sequences. Both also have more than one way of saying 'nothing found' -
+        None, an empty list, or an output whose boxes are None - and every one of
+        those has to come back out of here as no lines at all.
+        """
+        if raw is None:
+            return []
+        if not hasattr(raw, "txts"):
+            # Legacy: (triples, elapsed).
+            if isinstance(raw, tuple) and len(raw) == 2:
+                raw = raw[0]
+            return list(raw) if raw else []
+        boxes = getattr(raw, "boxes", None)
+        if boxes is None or len(boxes) == 0:
+            return []
+        return list(zip(boxes, raw.txts or (), raw.scores or ()))
 
     def read(self, image: np.ndarray, **_) -> List[Dict[str, Any]]:
         try:
-            result, _elapsed = self._get_engine()(image, use_cls=False)
+            raw = self._get_engine()(image, use_cls=False)
         except TypeError:
             try:
-                result, _elapsed = self._get_engine()(image)
+                raw = self._get_engine()(image)
             except Exception as exc:
                 logger.error(f"RapidOCR failed: {exc}")
                 return []
         except Exception as exc:
             logger.error(f"RapidOCR failed: {exc}")
             return []
+
+        result = self._triples(raw)
         if not result:
             return []
 

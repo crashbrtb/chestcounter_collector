@@ -11,7 +11,7 @@ cd /d "%SCRIPT_DIR%"
 set "VENV_DIR=%SCRIPT_DIR%venv"
 set "WINPY_DIR=%SCRIPT_DIR%python"
 set "WINPY_ZIP=%SCRIPT_DIR%winpython.zip"
-set "WINPY_URL=https://github.com/winpython/winpython/releases/download/19.1.20260805final/Winpython64-3.14.7.0dot.zip"
+set "WINPY_URL=https://github.com/winpython/winpython/releases/download/15.3.20250425final/Winpython64-3.12.10.0dot.zip"
 
 echo.
 echo ==============================================================================
@@ -26,14 +26,35 @@ if not exist "%SCRIPT_DIR%execution_logs" (
 if not exist "%SCRIPT_DIR%config" mkdir "%SCRIPT_DIR%config"
 
 REM --- 1. Python ----------------------------------------------------------------
+REM  The dependencies decide the floor: Pillow and mysql-connector-python both
+REM  require 3.10 or newer. A Python below that used to get this far, build a
+REM  venv, and only fail pages later inside pip - so the version is checked
+REM  here, where the message can still say what is wrong.
 set "SYS_PYTHON="
+set "SYS_PYVER="
 where python >nul 2>nul
 if %errorlevel% equ 0 (
     for /f "tokens=*" %%i in ('python -c "import sys; print(sys.executable)" 2^>nul') do set "SYS_PYTHON=%%i"
+    for /f "tokens=*" %%i in ('python -c "import sys; print(sys.version.split()[0])" 2^>nul') do set "SYS_PYVER=%%i"
 )
 
 if defined SYS_PYTHON (
-    echo [OK] System Python: %SYS_PYTHON%
+    python -c "import sys; sys.exit(0 if sys.version_info[:2] >= (3,10) else 1)" >nul 2>nul
+    if errorlevel 1 (
+        echo [WARN] System Python is %SYS_PYVER%, and 3.10 or newer is required.
+        echo        Falling back to the portable copy.
+        set "SYS_PYTHON="
+    )
+)
+
+if defined SYS_PYTHON (
+    echo [OK] System Python: %SYS_PYTHON% ^(%SYS_PYVER%^)
+    python -c "import sys; sys.exit(0 if sys.version_info[:2] >= (3,15) else 1)" >nul 2>nul
+    if not errorlevel 1 (
+        echo [WARN] Python %SYS_PYVER% is newer than anything this has been tried on.
+        echo        The OCR engine needs an 'onnxruntime' build for it; if the install
+        echo        below fails, use Python 3.14.
+    )
     echo Creating virtual environment...
     python -m venv "%VENV_DIR%"
 ) else (

@@ -2,7 +2,14 @@
 # RapidOCR e o motor principal: modelos do PaddleOCR em ONNXRuntime, que leem
 # texto de interface com acento e nome estrangeiro. O pytesseract fica como
 # reserva para quem nao quiser baixar os modelos.
-rapidocr-onnxruntime>=1.4.4
+#
+# O pacote mudou de nome. 'rapidocr-onnxruntime' parou na 1.4.4 (jan/2025) com
+# Requires-Python <3.13, entao ele NAO instala em 3.13 nem em 3.14 - era esse o
+# erro na instalacao. O sucessor chama-se so 'rapidocr' e aceita >=3.8,<4.
+# Ele nao declara o onnxruntime entre as suas dependencias, entao o motor tem de
+# ser pedido aqui: sem esta linha o pacote instala e falha depois, ao ler.
+rapidocr>=3.0.0
+onnxruntime>=1.19.0
 pytesseract>=0.3.13
 
 # --- Navegador (CDP) ----------------------------------------------------------
@@ -10,12 +17,12 @@ websocket-client>=1.7.0
 requests>=2.31.0
 
 # --- Imagem -------------------------------------------------------------------
-opencv-python>=4.10.0
-numpy>=2.0.0
-Pillow>=11.0.0
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
 
 # --- Interface ----------------------------------------------------------------
 customtkinter>=5.2.0
 
 # --- Banco de dados -----------------------------------------------------------
-mysql-connector-python>=9.1.0
+mysql-connector-python>=8.0.33
