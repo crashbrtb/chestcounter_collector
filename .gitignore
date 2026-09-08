@@ -1,2 +1,17 @@
+# Configuração real da máquina (contém senhas de contas e de banco)
+config/config.json
 position.cfg
-config.cfg 
+config.cfg
+
+# Calibração: posições da tela desta máquina, refeitas pelo assistente
+config/calibration.json
+config/calib_refs/
+
+# Execução
+execution_logs/
+venv/
+python/
+
+# Python
+__pycache__/
+*.pyc

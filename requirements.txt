@@ -1,9 +1,21 @@
-opencv-python
-numpy
-pytesseract
-Pillow
-pyautogui
-pyperclip
-mysql-connector-python
-screeninfo
-pywin32
+# --- OCR ---------------------------------------------------------------------
+# RapidOCR e o motor principal: modelos do PaddleOCR em ONNXRuntime, que leem
+# texto de interface com acento e nome estrangeiro. O pytesseract fica como
+# reserva para quem nao quiser baixar os modelos.
+rapidocr-onnxruntime>=1.4.4
+pytesseract>=0.3.13
+
+# --- Navegador (CDP) ----------------------------------------------------------
+websocket-client>=1.7.0
+requests>=2.31.0
+
+# --- Imagem -------------------------------------------------------------------
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# --- Interface ----------------------------------------------------------------
+customtkinter>=5.2.0
+
+# --- Banco de dados -----------------------------------------------------------
+mysql-connector-python>=8.0.33

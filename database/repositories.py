@@ -12,6 +12,7 @@ class ChestRepository:
 
     def __init__(self, connection: MySQLConnection):
         self.connection = connection
+        self._columns: Dict[str, bool] = {}
 
     def get_player_name_mapping(self, ocr_player_name: str) -> str:
         """
@@ -54,33 +55,96 @@ class ChestRepository:
         finally:
             cursor.close()
 
-    def insert_incomplete_chest(self, name: str, player: str, source: str) -> bool:
-        """Inserts an incomplete chest into incomplete_chests table for manual review."""
+    def has_column(self, table: str, column: str) -> bool:
+        """
+        Whether a column exists, asked once and remembered.
+
+        The two profiles are on databases of different ages - one belongs to an
+        older version of the game and has not had the newer migrations run
+        against it. Rather than fail there, the collector asks and adapts.
+        """
+        key = f"{table}.{column}"
+        if key not in self._columns:
+            cursor = self.connection.cursor()
+            try:
+                cursor.execute(f"SHOW COLUMNS FROM `{table}` LIKE %s", (column,))
+                self._columns[key] = cursor.fetchone() is not None
+            except Error as exc:
+                logger.debug(f"Could not inspect {key}: {exc}")
+                self._columns[key] = False
+            finally:
+                cursor.close()
+        return self._columns[key]
+
+    def insert_incomplete_chest(self, name: str, player: str, source: str,
+                                screenshot: Optional[bytes] = None) -> bool:
+        """
+        Files a chest that could not be read, with the picture of it.
+
+        The picture is the point: a person can read what the OCR could not and
+        finish the record by hand, from the web interface. Without it the row
+        says only that something was missed, and the chest itself is already
+        gone from the game.
+
+        Where the database has no `screenshot` column - the older of the two -
+        the row is still written, just without the image.
+        """
+        with_image = screenshot is not None and self.has_column("incomplete_chests", "screenshot")
+
         cursor = self.connection.cursor()
         try:
-            query = "INSERT INTO incomplete_chests (name, player, source) VALUES (%s, %s, %s)"
-            cursor.execute(query, (name, player, source))
+            if with_image:
+                cursor.execute(
+                    "INSERT INTO incomplete_chests (name, player, source, screenshot) "
+                    "VALUES (%s, %s, %s, %s)", (name, player, source, screenshot))
+            else:
+                cursor.execute(
+                    "INSERT INTO incomplete_chests (name, player, source) VALUES (%s, %s, %s)",
+                    (name, player, source))
             self.connection.commit()
-            logger.warning(f"Inserted incomplete chest: '{name}', player: '{player}', source: '{source}'")
+            logger.warning(
+                f"Incomplete chest filed for review: '{name}', player '{player}', source '{source}'"
+                + (f" (com captura, {len(screenshot) // 1024} KB)" if with_image
+                   else " (sem captura)")
+            )
             return True
-        except Error as e:
-            logger.error(f"Error inserting incomplete chest: {e}")
+        except Error as exc:
+            logger.error(f"Error inserting incomplete chest: {exc}")
             self.connection.rollback()
             return False
         finally:
             cursor.close()
 
     def insert_error(self, error_value: str) -> bool:
-        """Inserts an error record into errors table."""
+        """
+        Records a problem in `errors`, for the web interface to act on.
+
+        Nothing in the collector calls this today, and that is deliberate. The
+        table is meant for problems a person can resolve from the interface -
+        a name, a chest, something with a decision behind it - and the two kinds
+        of problem the collector actually meets both have a better home:
+
+        * a chest it could not read goes to `incomplete_chests`, with the
+          screenshot and a review screen built around it;
+        * a run that failed - a menu that did not open, a profile it could not
+          reach - is operational, nobody resolves it from a web page, and it
+          belongs in the local log.
+
+        Writing those here turned the table into a second, worse copy of the log
+        file. It is kept as the way in for whatever the interface does define.
+
+        `error_value` is a tinytext, so the message is truncated rather than
+        being lost to a database error at the very moment something went wrong.
+        """
+        message = (error_value or "").strip()[:250]
         cursor = self.connection.cursor()
         try:
-            query = "INSERT INTO errors (error_value) VALUES (%s)"
-            cursor.execute(query, (error_value,))
+            cursor.execute("INSERT INTO errors (error_value) VALUES (%s)", (message,))
             self.connection.commit()
-            logger.debug(f"Inserted error log: {error_value}")
+            logger.info(f"Registrado em errors: {message}")
             return True
-        except Error as e:
-            logger.error(f"Error inserting into errors table: {e}")
+        except Error as exc:
+            logger.error(f"Could not write to the errors table: {exc}")
             self.connection.rollback()
             return False
         finally:

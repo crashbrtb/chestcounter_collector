@@ -1,46 +1,50 @@
 """
-Abstract base class for all bot feature modules.
+Shared base for the feature modules (chests, journal, chat).
+
+A module receives the whole RunContext rather than a handful of services: what a
+module needs tends to grow (the chest collector ended up needing the profile
+switcher too), and threading one more argument through every constructor each
+time was how the old signatures drifted apart.
 """
 
 from abc import ABC, abstractmethod
 from typing import Any, Dict
-from config.config_loader import AppConfig
-from core.window_manager import WindowManager
-from core.vision import Vision
-from core.ocr_engine import OCREngine
-from core.bot_controller import BotController
-from core.game_state import GameStateHelper
 
 
 class BaseModule(ABC):
-    """Base interface for all automation modules."""
+    def __init__(self, context):
+        self.ctx = context
 
-    def __init__(
-        self,
-        config: AppConfig,
-        window_mgr: WindowManager,
-        vision: Vision,
-        ocr: OCREngine,
-        controller: BotController,
-        game_state: GameStateHelper,
-    ):
-        self.config = config
-        self.window_mgr = window_mgr
-        self.vision = vision
-        self.ocr = ocr
-        self.controller = controller
-        self.game_state = game_state
+    # Convenience shortcuts - modules read these constantly.
+    @property
+    def browser(self):
+        return self.ctx.browser
+
+    @property
+    def ocr(self):
+        return self.ctx.ocr
+
+    @property
+    def vision(self):
+        return self.ctx.vision
+
+    @property
+    def calibration(self):
+        return self.ctx.calibration
+
+    @property
+    def game_state(self):
+        return self.ctx.game_state
+
+    @property
+    def config(self):
+        return self.ctx.config
 
     @property
     @abstractmethod
     def name(self) -> str:
-        """Name of the module."""
-        pass
+        """Name of the module, used in logs."""
 
     @abstractmethod
     def run(self, **kwargs) -> Dict[str, Any]:
-        """
-        Executes the module task.
-        Returns a summary dictionary with metrics/results.
-        """
-        pass
+        """Executes the module and returns a summary of what it did."""

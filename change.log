@@ -1,16 +1,20 @@
-0.1 - initial release
-0.2 - add multiple accounts support
-1.5.0 - Architectural refactoring and new features:
-  - Architecture: Complete modular redesign separating Core (Vision, OCR, Window Manager, Bot Controller, Game State), Database (Connection Manager, Repositories), Config, and Feature Modules.
-  - Triumphal Gifts Support: Automatic multi-tab gift collection supporting both standard 'Gifts' and 'Triumphal Gifts' tabs.
-  - Robust Account Switcher: Full-line and token pair OCR matching algorithm with fuzzy similarity scoring (resolving ambiguities between accounts like 'Crash BR' and 'Cash BR').
-  - Advanced Game State Handling: Automated store popup detection and dismissal with polling (wait_and_close_store) and safe modal closure before switching profiles.
-  - Active Profile Verification: High-accuracy active player banner reader supporting light/gold fonts on dark backgrounds via inverted Otsu binarization.
-  - Journal & Event Score Base: New JournalParser module and JournalRepository for upcoming event score tracking and leaderboard analysis.
-  - Chat Automation Base: New ChatAutomator module supporting UTF-8 clipboard pasting for broadcast announcements, accents, and emojis.
-  - Structured Logging & CLI: Daily rotating logs in execution_logs/ and command-line interface in main.py supporting selective execution by account or module.
-1.5.1 - Performance optimization and account navigation fixes:
-  - High-Speed Chest Collection: Optimized image processing pipeline and reduced click latency (<0.25s), bringing per-chest collection time down from ~6s to under 0.5s.
-  - Account List Scroll & Navigation: Fixed account switcher logic to guarantee top-scrolling on open, preventing premature menu closure and enabling seamless multi-view scrolling.
-  - Config Clean-Up: Removed obsolete and unused variables from position.cfg and position model.cfg (open_button, switch_progress_name_area, counter_university, etc.).
-  - Automated Setup & Dependencies: Updated install.bat to dynamically resolve relative paths, auto-detect host Python, and refreshed requirements.txt with all required packages (pyperclip, pywin32, pytesseract).
+0.1   - Initial release.
+0.2   - Multiple accounts support.
+1.5.0 - Modular redesign (Core, Database, Config, Modules) and OCR-based account switching.
+1.5.1 - Faster collection (~6s -> under 0.5s per chest) and account list scrolling fixes.
+2.0.0 - Browser-based rewrite: new OCR engine, calibration wizard, 4-at-a-time collection.
+  - Browser (CDP): the game runs in Chrome driven by the DevTools Protocol; the desktop app
+    and all window/pyautogui code are gone, and clicks now use page coordinates.
+  - Accounts and profiles: each account keeps its own credentials, cities and Chrome profile,
+    so its verified session survives between runs and no login is needed on every run.
+  - New OCR engine: Tesseract first, RapidOCR only on demand. Measured on the real chest
+    panel, all at 100% accuracy: Tesseract 310 ms, RapidOCR 462 ms, onnxtr 1040 ms.
+  - The database teaches the OCR: members, chest origins, history and manual corrections are
+    loaded per profile, and a field recognized there skips the slow engine entirely.
+  - 4-at-a-time collection: one capture and one OCR pass per panel of 4 chests, clicked
+    bottom-up. 2278 ms -> 212 ms per chest; 1000 chests drop from 38 to 3.5 minutes.
+  - Calibration wizard: points, areas and reference images recorded over a game capture, with
+    magnifier and per-step viewport. "Test this step" clicks and measures if the screen moved.
+  - Configuration UI (run.bat config): every setting, accounts, profiles and databases with
+    connection test, calibration and a test run with live log.
+  - Unreadable chests become a review queue with the PNG crop, handled in the web interface.

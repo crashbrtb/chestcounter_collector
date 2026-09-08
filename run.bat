@@ -1,31 +1,88 @@
 @echo off
-setlocal enabledelayedexpansion
+REM ==============================================================================
+REM  Total Battle Chest Collector - ponto de entrada unico
+REM ==============================================================================
+REM
+REM  Este e o unico arquivo que o Agendador de Tarefas do Windows precisa chamar.
+REM  Ele nao guarda configuracao nenhuma: tudo (contas, perfis, tempos, navegador,
+REM  OCR, nivel e retencao de log) esta em config\config.json e se edita pela
+REM  interface -- run.bat config
+REM
+REM  O log NAO e mais um redirecionamento daqui. O proprio Python escreve
+REM  execution_logs\collector_AAAA-MM-DD.log em UTF-8, apaga os antigos sozinho e
+REM  registra ate as falhas que acontecem dentro do processo. Redirecionar a saida
+REM  do .bat perdia acentos e cortava o log quando o processo morria.
+REM
+REM  Uso:
+REM      run.bat                 coleta os baus (e o que o agendador deve chamar)
+REM      run.bat config          abre a interface de configuracao
+REM      run.bat calibrar        abre direto o assistente de calibracao
+REM      run.bat verificar       so confere configuracao e calibracao
+REM
+REM  Codigo de saida (o agendador enxerga em "Ultimo resultado da execucao"):
+REM      0 = tudo coletado    1 = alguma falha    2 = configuracao/calibracao
+REM ==============================================================================
 
-REM **Get Current Directory**
-set "SCRIPT_DIR=%~dp0"
-cd /d "%SCRIPT_DIR%"
+setlocal
+cd /d "%~dp0"
 
-REM **Ensure execution_logs directory exists**
 if not exist "execution_logs" mkdir "execution_logs"
 
-REM **Get Date and Time for log file name**
-for /f "tokens=2 delims==" %%a in ('wmic OS Get LocalDateTime /VALUE ^| findstr LocalDateTime') do set "datahora=%%a"
-set "data=%datahora:~0,4%-%datahora:~4,2%-%datahora:~6,2%"
-set "hora=%datahora:~8,2%-%datahora:~10,2%-%datahora:~12,2%"
-set "logfile=%SCRIPT_DIR%execution_logs\log_%data%_%hora%.txt"
-
-REM **Check for Python in venv or system**
+REM --- Interpretador: venv do projeto, senao o Python do sistema ---------------
 set "PYTHON_EXE=python"
-if exist "%SCRIPT_DIR%venv\Scripts\python.exe" (
-    set "PYTHON_EXE=%SCRIPT_DIR%venv\Scripts\python.exe"
-) else if exist "C:\chestcounter\venv\Scripts\python.exe" (
-    set "PYTHON_EXE=C:\chestcounter\venv\Scripts\python.exe"
+set "PYTHONW_EXE=pythonw"
+if exist "%~dp0venv\Scripts\python.exe" (
+    set "PYTHON_EXE=%~dp0venv\Scripts\python.exe"
+    set "PYTHONW_EXE=%~dp0venv\Scripts\pythonw.exe"
 )
 
-echo [INFO] Starting Total Battle Automation with %PYTHON_EXE% >> "%logfile%"
-echo [INFO] Working Directory: %SCRIPT_DIR% >> "%logfile%"
+REM --- Modo -------------------------------------------------------------------
+set "MODE=%~1"
 
-%PYTHON_EXE% "%SCRIPT_DIR%main.py" 1>>"%logfile%" 2>>&1
+if /i "%MODE%"=="config"    goto :gui
+if /i "%MODE%"=="gui"       goto :gui
+if /i "%MODE%"=="calibrar"  goto :calibrate
+if /i "%MODE%"=="verificar" goto :check
+goto :collect
 
-echo [INFO] Script execution finished. >> "%logfile%"
-endlocal
+:gui
+call :check_interface
+if errorlevel 1 exit /b 2
+REM pythonw: a interface nao precisa de janela de console atras dela.
+start "" "%PYTHONW_EXE%" "%~dp0main.py" --gui
+exit /b 0
+
+:calibrate
+call :check_interface
+if errorlevel 1 exit /b 2
+start "" "%PYTHONW_EXE%" "%~dp0main.py" --calibrate
+exit /b 0
+
+:check_interface
+REM O "start" e disparar e esquecer: se o Python morrer ao abrir a interface, a
+REM janela do duplo clique fecha e nao sobra nada na tela. Este teste de import
+REM custa um segundo e troca esse silencio por uma mensagem.
+"%PYTHON_EXE%" -c "import gui.app" 2>"%~dp0execution_logs\startup.log"
+if errorlevel 1 (
+    echo.
+    echo  [ERRO] A interface nao pode ser aberta.
+    echo.
+    echo  Causa provavel: dependencias faltando ou Python nao instalado.
+    echo  Rode o install.bat uma vez e tente de novo.
+    echo.
+    echo  Detalhes tecnicos em: execution_logs\startup.log
+    echo.
+    pause
+    exit /b 1
+)
+exit /b 0
+
+:check
+"%PYTHON_EXE%" "%~dp0main.py" --check
+exit /b %ERRORLEVEL%
+
+:collect
+REM Falhas anteriores ao logger (Python ausente, dependencia faltando) nao teriam
+REM onde aparecer: e so para isso que existe o startup.log.
+"%PYTHON_EXE%" "%~dp0main.py" 2>>"%~dp0execution_logs\startup.log"
+exit /b %ERRORLEVEL%

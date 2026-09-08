@@ -1,45 +1,100 @@
 """
-Logging configuration for Total Battle Collector.
-Supports structured logging to both file (in execution_logs/) and console.
+Logging for the collector.
+
+The application is normally started by the Windows Task Scheduler, with nobody
+watching: the log file is the only record of what happened. So the whole log is
+written from Python - one dated file per day, plus the console - instead of
+redirecting the output of run.bat. That way the encoding is UTF-8 (player names
+have accents), old files are cleaned up on their own, and a crash inside the
+process still lands in the same file as the rest of the run.
 """
 
+import logging
 import os
 import sys
-import logging
+import time
 from datetime import datetime
+from typing import Optional
 
-def setup_logger(name: str = "TBCollector", log_dir: str = "execution_logs", level: int = logging.INFO) -> logging.Logger:
-    """Configures and returns a structured logger."""
-    os.makedirs(log_dir, exist_ok=True)
-    
-    logger = logging.getLogger(name)
-    logger.setLevel(level)
-    
-    # Avoid duplicate handlers if setup_logger is called multiple times
-    if logger.handlers:
-        return logger
+LOG_FORMAT = "[%(asctime)s] [%(levelname)-7s] %(message)s"
+DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+DEFAULT_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "execution_logs")
 
-    # Log format
-    formatter = logging.Formatter(
-        fmt="[%(asctime)s] [%(levelname)-7s] [%(name)s] %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S"
-    )
+logger = logging.getLogger("TBCollector")
+logger.setLevel(logging.INFO)
+_configured_dir: Optional[str] = None
 
-    # Console handler (UTF-8 safe)
-    console_handler = logging.StreamHandler(sys.stdout)
-    console_handler.setLevel(level)
-    console_handler.setFormatter(formatter)
-    logger.addHandler(console_handler)
 
-    # File handler with current date
-    date_str = datetime.now().strftime("%Y-%m-%d")
-    log_file_path = os.path.join(log_dir, f"collector_{date_str}.log")
-    file_handler = logging.FileHandler(log_file_path, encoding="utf-8")
-    file_handler.setLevel(level)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
+def _console_handler(level: int) -> logging.Handler:
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(level)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT, DATE_FORMAT))
+    return handler
 
+
+def _file_handler(log_dir: str, level: int) -> Optional[logging.Handler]:
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+        path = os.path.join(log_dir, f"collector_{datetime.now():%Y-%m-%d}.log")
+        handler = logging.FileHandler(path, encoding="utf-8")
+    except OSError as exc:
+        print(f"[WARN] Não foi possível abrir o arquivo de log em {log_dir}: {exc}")
+        return None
+    handler.setLevel(level)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT, DATE_FORMAT))
+    return handler
+
+
+def purge_old_logs(log_dir: str, retention_days: int):
+    """Deletes *.log files older than the retention window (0 = keep forever).
+
+    Pega tanto os collector_AAAA-MM-DD.log quanto o startup.log, que o run.bat
+    alimenta com o stderr das falhas anteriores ao logger e que so cresceria.
+    """
+    if retention_days <= 0 or not os.path.isdir(log_dir):
+        return
+    cutoff = time.time() - retention_days * 86400
+    for name in os.listdir(log_dir):
+        if not name.endswith(".log"):
+            continue
+        path = os.path.join(log_dir, name)
+        try:
+            if os.path.isfile(path) and os.path.getmtime(path) < cutoff:
+                os.remove(path)
+        except OSError:
+            pass
+
+
+def configure(log_dir: str = DEFAULT_LOG_DIR, level: str = "INFO", retention_days: int = 7) -> logging.Logger:
+    """(Re)points the shared logger at a directory and level. Safe to call twice."""
+    global _configured_dir
+
+    numeric_level = getattr(logging, str(level).upper(), logging.INFO)
+    logger.setLevel(numeric_level)
+    for handler in list(logger.handlers):
+        logger.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:
+            pass
+
+    logger.addHandler(_console_handler(numeric_level))
+    file_handler = _file_handler(log_dir, numeric_level)
+    if file_handler:
+        logger.addHandler(file_handler)
+
+    purge_old_logs(log_dir, retention_days)
+    _configured_dir = log_dir
     return logger
 
-# Default application logger instance
-logger = setup_logger()
+
+def screenshot_dir() -> str:
+    """Where diagnostic screenshots go, next to the logs of the same run."""
+    base = _configured_dir or DEFAULT_LOG_DIR
+    path = os.path.join(base, "screenshots")
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+# Console-only default, so importing a module before main() runs never loses a message.
+configure(DEFAULT_LOG_DIR, "INFO", 0)

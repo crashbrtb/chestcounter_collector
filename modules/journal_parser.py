@@ -1,65 +1,55 @@
 """
-Journal Parser module for reading event results and recording player scores.
+Journal module - event scores read from the in-game journal.
+
+Still a placeholder, as it was before the browser migration, but now honest
+about it: it needs its own calibration steps (the journal button and the
+ranking area), and those do not exist in core/calibration.py yet. Rather than
+click at coordinates nobody recorded, it says what is missing and stops.
+
+Adding it later means: two entries in STEPS, and filling in the parsing of a
+ranking line below.
 """
 
-from typing import Dict, Any, List, Optional, Tuple
-from utils.logger import logger
+from typing import Any, Dict, List
+
 from database.db_connection import DatabaseConnection
 from database.repositories import JournalRepository
-from config.config_loader import AccountConfig
+from utils.logger import logger
+
 from .base_module import BaseModule
+
+REQUIRED_STEPS = ("journal_button", "journal_ranking_area")
 
 
 class JournalParser(BaseModule):
-    """
-    Automates reading the in-game Journal ('Diário') to calculate player event scores
-    and store participation metrics in the database.
-    """
-
     @property
     def name(self) -> str:
         return "JournalParser"
 
-    def open_journal(self, journal_button_coord: Optional[Tuple[int, int]] = None) -> bool:
-        """Clicks the in-game Journal icon to open event history."""
-        if not journal_button_coord:
-            logger.warning("Journal button coordinates not provided.")
-            return False
+    def read_leaderboard(self, event_name: str, profile) -> List[Dict[str, Any]]:
+        """Reads the ranking area and records one row per player."""
+        area = self.calibration.region("journal_ranking_area")
+        if not area:
+            return []
 
-        logger.info(f"Opening Journal at {journal_button_coord}...")
-        self.controller.click(journal_button_coord[0], journal_button_coord[1], delay=2.0)
-        return True
-
-    def read_event_leaderboard(
-        self,
-        event_name: str,
-        ranking_area: Tuple[int, int, int, int],
-        account_config: AccountConfig,
-    ) -> List[Dict[str, Any]]:
-        """
-        Extracts player rankings and scores from an event summary window using OCR
-        and saves them to the database.
-        """
-        logger.info(f"Reading leaderboard for event '{event_name}' in area {ranking_area}...")
-        lines = self.ocr.extract_lines_from_area(ranking_area, upscale=200, apply_threshold=True)
-
-        results = []
-        with DatabaseConnection(account_config) as connection:
+        rows = self.ocr.read_rows(area)
+        recorded = []
+        with DatabaseConnection(profile.database, profile.label) as connection:
             if not connection:
-                logger.error("Database connection failed for Journal score saving.")
-                return results
-
+                return []
             repo = JournalRepository(connection)
-
-            for line in lines:
-                # Example parsing line: "1. PlayerName - 15,400,000"
-                logger.debug(f"Parsing journal line: '{line}'")
-                # Structure can be expanded with regex per event type
-                results.append({"raw_line": line})
-
-        return results
+            for row in rows:
+                logger.debug(f"Journal row: '{row}'")
+                recorded.append({"raw": row, "event": event_name})
+            _ = repo  # rows are not parsed into scores yet
+        return recorded
 
     def run(self, event_name: str = "Tournament", **kwargs) -> Dict[str, Any]:
-        """Runs the journal parsing workflow."""
-        logger.info(f"Starting Journal parsing for event: '{event_name}'")
-        return {"module": self.name, "event": event_name, "status": "ready_for_event_mapping"}
+        missing = self.calibration.require(*REQUIRED_STEPS)
+        if missing:
+            logger.warning(
+                f"O módulo Diário ainda não tem passos de calibração ({', '.join(missing)}). "
+                f"Nada foi lido."
+            )
+            return {"module": self.name, "success": False, "reason": "sem calibração"}
+        return {"module": self.name, "success": False, "reason": "leitura de ranking ainda não implementada"}

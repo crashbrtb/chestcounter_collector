@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 REM ==============================================================================
-REM Total Battle Collector - Automated Setup & Environment Installer
+REM  Total Battle Chest Collector - instalacao do ambiente
 REM ==============================================================================
 
 set "SCRIPT_DIR=%~dp0"
@@ -15,17 +15,17 @@ set "WINPY_URL=https://github.com/winpython/winpython/releases/download/15.3.202
 
 echo.
 echo ==============================================================================
-echo     Total Battle Collector - Instalacao do Ambiente Virtual
+echo     Total Battle Chest Collector - instalacao
 echo ==============================================================================
 echo.
 
-REM 1. Criar diretorio de logs
 if not exist "%SCRIPT_DIR%execution_logs" (
     mkdir "%SCRIPT_DIR%execution_logs"
-    echo [OK] Diretorio 'execution_logs' criado.
+    echo [OK] Pasta 'execution_logs' criada.
 )
+if not exist "%SCRIPT_DIR%config" mkdir "%SCRIPT_DIR%config"
 
-REM 2. Verificar se o Python esta instalado no sistema
+REM --- 1. Python ----------------------------------------------------------------
 set "SYS_PYTHON="
 where python >nul 2>nul
 if %errorlevel% equ 0 (
@@ -33,47 +33,62 @@ if %errorlevel% equ 0 (
 )
 
 if defined SYS_PYTHON (
-    echo [OK] Python do sistema detectado: %SYS_PYTHON%
-    echo Criando ambiente virtual venv...
+    echo [OK] Python do sistema: %SYS_PYTHON%
+    echo Criando ambiente virtual...
     python -m venv "%VENV_DIR%"
 ) else (
-    echo [INFO] Python nao encontrado no sistema. Baixando WinPython portátil...
-    
+    echo [INFO] Python nao encontrado. Baixando WinPython portatil...
     if not exist "%WINPY_DIR%\python.exe" (
-        echo [1/3] Baixando WinPython...
+        echo   [1/3] baixando...
         curl -L -o "%WINPY_ZIP%" "%WINPY_URL%"
-        
-        echo [2/3] Extraindo arquivos de base...
+        echo   [2/3] extraindo...
         if not exist "%WINPY_DIR%" mkdir "%WINPY_DIR%"
         tar -xf "%WINPY_ZIP%" --strip-components=2 -C "%WINPY_DIR%"
-        
-        echo [3/3] Removendo arquivo ZIP temporario...
+        echo   [3/3] limpando...
         if exist "%WINPY_ZIP%" del "%WINPY_ZIP%"
     )
-    
-    echo Criando ambiente virtual venv a partir do WinPython...
+    echo Criando ambiente virtual a partir do WinPython...
     "%WINPY_DIR%\python.exe" -m venv "%VENV_DIR%"
 )
 
 if not exist "%VENV_DIR%\Scripts\python.exe" (
-    echo [ERRO] Falha ao criar o ambiente virtual venv.
+    echo [ERRO] Falha ao criar o ambiente virtual.
     pause
     exit /b 1
 )
 
+REM --- 2. Dependencias ----------------------------------------------------------
 echo.
-echo === Atualizando pip no ambiente virtual ===
+echo === Atualizando o pip ===
 "%VENV_DIR%\Scripts\python.exe" -m pip install --upgrade pip --no-warn-script-location
 
 echo.
-echo === Instalando dependencias do requirements.txt ===
+echo === Instalando dependencias ===
+echo     (o RapidOCR baixa ~15 MB de modelos na primeira leitura)
 "%VENV_DIR%\Scripts\python.exe" -m pip install -r "%SCRIPT_DIR%requirements.txt"
+if errorlevel 1 (
+    echo [ERRO] Falha ao instalar as dependencias.
+    pause
+    exit /b 1
+)
+
+REM --- 3. Configuracao inicial --------------------------------------------------
+echo.
+echo === Gerando a configuracao inicial ===
+REM Cria config\config.json com os padroes e, se existir um position.cfg da
+REM versao antiga, aproveita dele as credenciais de banco ja cadastradas.
+"%VENV_DIR%\Scripts\python.exe" "%SCRIPT_DIR%main.py" --check
 
 echo.
 echo ==============================================================================
-echo [CONCLUIDO] Instalacao finalizada com sucesso!
-echo Todas as dependencias (incluindo o motor neural RapidOCR) foram instaladas.
-echo Para executar o bot, utilize o arquivo: run.bat
+echo  [CONCLUIDO]
+echo.
+echo  Proximos passos (duplo clique, nao precisa de linha de comando):
+echo    1) Configurar.bat  - cadastre contas, perfis e bancos; revise parametros
+echo    2) botao "Abrir o jogo no Chrome", faca login e va ate a tela do cla
+echo    3) botao "Calibrar" (ou o Calibrar.bat) - marque os controles na captura
+echo    4) botao "Executar coleta agora" para testar
+echo    5) Agendador de Tarefas do Windows apontando para run.bat
 echo ==============================================================================
 echo.
 pause

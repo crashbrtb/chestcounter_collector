@@ -1,173 +1,162 @@
 """
-Total Battle Automation Orchestrator - Main Entry Point.
-Coordinates window management, account switching, chest collection, and future modules.
+Total Battle Chest Collector - entry point.
+
+Started with no arguments it does what the Windows Task Scheduler needs: read
+config/config.json, run the collection, write the log, and exit with a status
+code the scheduler can act on (0 done, 1 failed, 2 misconfigured).
+
+    main.py                 collect, using config/config.json
+    main.py --gui           open the configuration and calibration interface
+    main.py --calibrate     open the calibration wizard directly
+    main.py --check         validate configuration and calibration, collect nothing
+    main.py --account NAME  restrict the run to one account
+    main.py --profile NAME  restrict the run to one profile
 """
 
-import sys
 import argparse
-from datetime import datetime
-from config.config_loader import ConfigLoader
-from core.window_manager import WindowManager
-from core.vision import Vision
-from core.ocr_engine import OCREngine
-from core.bot_controller import BotController
-from core.game_state import GameStateHelper
-from modules.account_manager import AccountManager
-from modules.chest_collector import ChestCollector
-from modules.journal_parser import JournalParser
-from modules.chat_automator import ChatAutomator
-from utils.logger import logger
+import sys
 
-# Ensure UTF-8 output
-sys.stdout.reconfigure(encoding="utf-8")
-sys.stderr.reconfigure(encoding="utf-8")
+from config.settings import ConfigManager, migrate_legacy_config
+from utils.cancel import Cancelled, cancellation, escape_watcher
+from utils.logger import configure, logger
+
+EXIT_OK = 0
+EXIT_FAILED = 1
+EXIT_MISCONFIGURED = 2
+EXIT_CANCELLED = 3
+
+# Player names carry accents; a cp1252 console would kill the process on print.
+for stream in (sys.stdout, sys.stderr):
+    try:
+        stream.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
+    except Exception:
+        pass
 
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(description="Total Battle Multi-Account Bot & Collector")
-    parser.add_argument(
-        "--module",
-        choices=["chests", "journal", "chat", "all"],
-        default="chests",
-        help="Feature module to run (default: chests)",
-    )
-    parser.add_argument(
-        "--account",
-        type=str,
-        default=None,
-        help="Run only for a specific account name instead of all configured accounts",
-    )
-    parser.add_argument(
-        "--keep-open",
-        action="store_true",
-        help="Do not close the game window after completion",
-    )
+    parser = argparse.ArgumentParser(description="Total Battle Chest Collector")
+    parser.add_argument("--gui", action="store_true", help="abre a interface de configuração")
+    parser.add_argument("--calibrate", action="store_true", help="abre direto o assistente de calibração")
+    parser.add_argument("--check", action="store_true", help="apenas valida configuração e calibração")
+    parser.add_argument("--account", help="executa somente esta conta")
+    parser.add_argument("--profile", help="executa somente este perfil")
+    parser.add_argument("--keep-open", action="store_true", help="não fecha o navegador ao terminar")
     return parser.parse_args()
 
 
-def run_chest_workflow(
-    app_config,
-    window_mgr,
-    game_state,
-    account_mgr,
-    chest_collector,
-    target_account_name=None,
-    keep_open=False,
-):
-    coords = app_config.coordinates
-    accounts = app_config.accounts
+def load_configuration() -> ConfigManager:
+    """
+    Loads config.json, creating it on first run.
 
-    if not accounts:
-        logger.error("No accounts found in position.cfg. Exiting.")
-        return False
+    A first run on a machine that had the old collector inherits its database
+    credentials from position.cfg - those were typed in by hand once and there is
+    no reason to make anyone type them again. The old coordinates are not
+    imported: they were positions on the desktop client's screen and mean nothing
+    in the browser.
+    """
+    config = ConfigManager()
+    if config.exists:
+        return config
 
-    # Filter accounts if a single account was requested
-    if target_account_name:
-        accounts = [acc for acc in accounts if target_account_name.lower() in acc.account.lower()]
-        if not accounts:
-            logger.error(f"Requested account '{target_account_name}' not found in configuration.")
-            return False
-
-    # 1. Ensure Total Battle is open and store is closed
-    if not window_mgr.ensure_game_open(coords.coords_play_button):
-        logger.error("Failed to start or locate Total Battle window.")
-        return False
-
-    if coords.screen_area:
-        game_state.wait_and_close_store(coords.screen_area, max_wait_seconds=15.0)
-
-    # 2. Iterate through accounts
-    total_collected = 0
-    total_errors = 0
-
-    for idx, acc in enumerate(accounts, start=1):
-        logger.info(f"=== Starting Account #{idx} [{acc.section}]: '{acc.account}' ===")
-
-        # Switch to account
-        switched = account_mgr.select_account(acc.account)
-        if not switched:
-            logger.error(f"Could not switch to account '{acc.account}'. Skipping to next.")
-            continue
-
-        # Double check if active
-        if coords.account_name_display_area:
-            if not account_mgr.is_account_active(acc.account):
-                logger.warning(f"Active account does not match '{acc.account}'. Skipping collection.")
-                continue
-
-        # Collect gifts
-        result = chest_collector.collect_for_account(acc)
-        total_collected += result.get("collected", 0)
-        total_errors += result.get("incomplete", 0)
-        logger.info(f"Completed collection for '{acc.account}'.")
-
-    logger.info("=" * 50)
-    logger.info(f"ALL ACCOUNTS FINISHED: {total_collected} collected, {total_errors} incomplete/errors.")
-    logger.info("=" * 50)
-
-    # 3. Close game unless --keep-open is specified
-    if not keep_open:
-        window_mgr.close_window(coords.window_title)
-        logger.info("Game closed.")
-
-    return True
+    logger.info("config/config.json not found; creating it with the default values.")
+    imported = migrate_legacy_config()
+    if imported:
+        config.accounts = imported
+        profiles = sum(len(a.profiles) for a in imported)
+        logger.info(
+            f"Imported {profiles} profile(s) from position.cfg. Open the interface to fill in "
+            f"the account login and password, then run the calibration."
+        )
+    config.save()
+    return config
 
 
-def main():
+def main() -> int:
     args = parse_arguments()
-    start_time = datetime.now()
-    logger.info(f"Starting Total Battle Collector at {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
 
     try:
-        # Load Configuration
-        config_loader = ConfigLoader()
-        app_config = config_loader.load()
+        config = load_configuration()
+    except ValueError as exc:
+        logger.error(str(exc))
+        return EXIT_MISCONFIGURED
 
-        # Initialize Core Services
-        window_mgr = WindowManager(
-            window_title=app_config.coordinates.window_title,
-            launcher_title=app_config.coordinates.launcher_title,
-            launcher_path=app_config.coordinates.path_total_battle,
-        )
-        vision = Vision()
-        ocr = OCREngine(vision)
-        controller = BotController()
-        game_state = GameStateHelper(vision, controller)
+    configure(
+        log_dir=config.resolved_log_dir(),
+        level=config.get("execution", "log_level", "INFO"),
+        retention_days=int(config.get("execution", "log_retention_days", 7)),
+    )
 
-        # Initialize Modules
-        account_mgr = AccountManager(app_config, window_mgr, vision, ocr, controller, game_state)
-        chest_collector = ChestCollector(app_config, window_mgr, vision, ocr, controller, game_state)
-        journal_parser = JournalParser(app_config, window_mgr, vision, ocr, controller, game_state)
-        chat_automator = ChatAutomator(app_config, window_mgr, vision, ocr, controller, game_state)
+    if args.keep_open:
+        config.set("execution", "close_browser_on_finish", False)
 
-        # Dispatch module
-        if args.module in ("chests", "all"):
-            run_chest_workflow(
-                app_config,
-                window_mgr,
-                game_state,
-                account_mgr,
-                chest_collector,
-                target_account_name=args.account,
-                keep_open=args.keep_open,
-            )
+    if args.gui or args.calibrate:
+        try:
+            from gui.app import launch
+        except ImportError as exc:
+            logger.error(f"Interface indisponível ({exc}). Rode install.bat para instalar o customtkinter.")
+            return EXIT_MISCONFIGURED
+        launch(config, open_calibration=args.calibrate)
+        return EXIT_OK
 
-        if args.module == "journal":
-            logger.info("Running Journal module...")
-            journal_parser.run()
+    from core.context import build_context
+    from core.runner import CollectorRunner, RunnerError
 
-        if args.module == "chat":
-            logger.info("Running Chat module...")
-            chat_automator.run()
+    context = build_context(config)
+    runner = CollectorRunner(context)
 
-    except Exception as e:
-        logger.exception(f"Unhandled exception in bot execution: {e}")
-        sys.exit(1)
+    if args.check:
+        problems = runner.preflight()
+        for problem in problems:
+            logger.error(problem)
+        if problems:
+            return EXIT_MISCONFIGURED
+        logger.info("Configuração e calibração estão completas.")
+        return EXIT_OK
+
+    module = config.get("execution", "module", "chests")
+    logger.info(f"Starting Total Battle Chest Collector (module: {module})")
+
+    summary = None
+    cancellation.reset()
+    escape_watcher.start()
+    logger.info("Segure ESC por um instante para cancelar a execução.")
+    try:
+        if module in ("chests", "all"):
+            summary = runner.run(only_account=args.account, only_profile=args.profile)
+
+        # The journal and chat modules are still placeholders waiting on
+        # calibration steps of their own; they say so rather than acting blind.
+        if module in ("journal", "all"):
+            from modules.journal_parser import JournalParser
+
+            context.start_browser()
+            logger.info(JournalParser(context).run().get("reason", "módulo Diário executado"))
+
+        if module in ("chat", "all"):
+            from modules.chat_automator import ChatAutomator
+
+            context.start_browser()
+            logger.info(ChatAutomator(context).run().get("reason", "módulo Chat executado"))
+    except Cancelled as exc:
+        logger.warning(f"Execução cancelada ({exc}). O que já foi coletado está gravado.")
+        return EXIT_CANCELLED
+    except RunnerError as exc:
+        logger.error(str(exc))
+        return EXIT_MISCONFIGURED
+    except Exception as exc:  # noqa: BLE001
+        logger.exception(f"Unhandled failure: {exc}")
+        return EXIT_FAILED
     finally:
-        end_time = datetime.now()
-        duration = end_time - start_time
-        logger.info(f"Execution finished at {end_time.strftime('%Y-%m-%d %H:%M:%S')} (Duration: {duration})")
+        escape_watcher.stop()
+        try:
+            context.close()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(f"Could not close the browser cleanly: {exc}")
+
+    if summary is None:
+        return EXIT_OK
+    return EXIT_FAILED if summary["failures"] else EXIT_OK
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

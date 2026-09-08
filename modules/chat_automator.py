@@ -1,46 +1,50 @@
 """
-Chat Automator module for broadcasting automated clan/kingdom messages and announcements.
+Chat module - announcements sent to the clan chat.
+
+In the browser the text goes in through `Input.insertText`, which delivers the
+whole string as one event: accents and emoji arrive intact and no keyboard
+layout is involved. That is the part worth keeping from the old clipboard trick,
+without the clipboard.
+
+Like the journal module, it waits on calibration steps of its own (where the
+chat opens and where its input box is) before it can do anything unattended.
 """
 
-from typing import Dict, Any, Optional, Tuple
+from typing import Any, Dict
+
 from utils.logger import logger
+
 from .base_module import BaseModule
+
+REQUIRED_STEPS = ("chat_button", "chat_input")
 
 
 class ChatAutomator(BaseModule):
-    """
-    Automates sending structured clan announcements, reminders, and alerts
-    using UTF-8 clipboard pasting (supporting emojis and accents).
-    """
-
     @property
     def name(self) -> str:
         return "ChatAutomator"
 
-    def open_chat(self, chat_icon_coord: Tuple[int, int]) -> bool:
-        """Opens the in-game chat interface."""
-        logger.info(f"Opening chat interface at {chat_icon_coord}...")
-        self.controller.click(chat_icon_coord[0], chat_icon_coord[1], delay=1.0)
+    def send_message(self, message: str) -> bool:
+        chat_button = self.calibration.point("chat_button")
+        chat_input = self.calibration.point("chat_input")
+        if not (chat_button and chat_input):
+            return False
+
+        self.browser.click(chat_button[0], chat_button[1], delay=1.0)
+        self.browser.click(chat_input[0], chat_input[1], delay=0.4)
+        self.browser.insert_text(message)
+        self.browser.press_key("Enter", delay=0.3)
+        logger.info(f"Chat message sent: '{message}'")
         return True
 
-    def send_message(self, message: str, chat_input_coord: Tuple[int, int]) -> bool:
-        """
-        Clicks the chat input field, pastes the text, and presses Enter.
-        """
-        logger.info(f"Sending chat message: '{message}'...")
-        # 1. Click input box
-        self.controller.click(chat_input_coord[0], chat_input_coord[1], delay=0.5)
-
-        # 2. Paste text and send
-        self.controller.paste_text(message, press_enter=True, delay=0.5)
-        logger.info("Message sent successfully.")
-        return True
-
-    def run(self, message: str = "", chat_input_coord: Optional[Tuple[int, int]] = None, **kwargs) -> Dict[str, Any]:
-        """Executes chat message sending."""
-        if not message or not chat_input_coord:
-            logger.warning("Message or input coordinate missing.")
-            return {"module": self.name, "success": False}
-
-        success = self.send_message(message, chat_input_coord)
-        return {"module": self.name, "success": success, "message": message}
+    def run(self, message: str = "", **kwargs) -> Dict[str, Any]:
+        missing = self.calibration.require(*REQUIRED_STEPS)
+        if missing:
+            logger.warning(
+                f"O módulo Chat ainda não tem passos de calibração ({', '.join(missing)}). "
+                f"Nada foi enviado."
+            )
+            return {"module": self.name, "success": False, "reason": "sem calibração"}
+        if not message:
+            return {"module": self.name, "success": False, "reason": "mensagem vazia"}
+        return {"module": self.name, "success": self.send_message(message), "message": message}
