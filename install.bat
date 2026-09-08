@@ -11,7 +11,7 @@ cd /d "%SCRIPT_DIR%"
 set "VENV_DIR=%SCRIPT_DIR%venv"
 set "WINPY_DIR=%SCRIPT_DIR%python"
 set "WINPY_ZIP=%SCRIPT_DIR%winpython.zip"
-set "WINPY_URL=https://github.com/winpython/winpython/releases/download/15.3.20250425final/Winpython64-3.12.10.0dot.zip"
+set "WINPY_URL=https://github.com/winpython/winpython/releases/download/19.1.20260805final/Winpython64-3.14.7.0dot.zip"
 
 echo.
 echo ==============================================================================

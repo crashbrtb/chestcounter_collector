@@ -10,12 +10,12 @@ websocket-client>=1.7.0
 requests>=2.31.0
 
 # --- Imagem -------------------------------------------------------------------
-opencv-python>=4.8.0
-numpy>=1.24.0
-Pillow>=10.0.0
+opencv-python>=4.10.0
+numpy>=2.0.0
+Pillow>=11.0.0
 
 # --- Interface ----------------------------------------------------------------
 customtkinter>=5.2.0
 
 # --- Banco de dados -----------------------------------------------------------
-mysql-connector-python>=8.0.33
+mysql-connector-python>=9.1.0
