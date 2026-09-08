@@ -99,7 +99,7 @@ class Browser:
 
     def _http(self, path: str, timeout: float = 2.0):
         if requests is None:
-            raise BrowserError("dependência 'requests' não instalada (rode install.bat)")
+            raise BrowserError("dependency 'requests' is not installed (run install.bat)")
         return requests.get(f"http://{self.host}:{self.port}{path}", timeout=timeout)
 
     def is_cdp_ready(self) -> bool:
@@ -122,7 +122,7 @@ class Browser:
         executable = self.find_executable()
         if not executable:
             raise BrowserError(
-                "Chrome/Edge/Brave não encontrado. Informe o caminho em Navegador > Caminho do Chrome."
+                "Chrome/Edge/Brave not found. Set the path in Browser > Chrome executable path."
             )
 
         os.makedirs(self.user_data_dir, exist_ok=True)
@@ -167,7 +167,7 @@ class Browser:
             if self.is_cdp_ready():
                 return True
             time.sleep(0.3)
-        raise BrowserError(f"O navegador não respondeu na porta CDP {self.port} em 30s.")
+        raise BrowserError(f"The browser did not respond on CDP port {self.port} within 30s.")
 
     def start(self) -> bool:
         """Reuses a browser that is already listening, otherwise launches one."""
@@ -176,7 +176,7 @@ class Browser:
         else:
             self.launch()
         if not self.connect():
-            raise BrowserError("Não foi possível conectar na aba do jogo via CDP.")
+            raise BrowserError("Could not connect to the game tab via CDP.")
         return True
 
     def switch_profile(self, user_data_dir: str) -> bool:
@@ -194,8 +194,8 @@ class Browser:
 
         if not self._launched_by_us and self.is_cdp_ready():
             logger.warning(
-                "O navegador já estava aberto quando a execução começou, então não dá para trocar "
-                "o perfil dele. Feche o Chrome do coletor ou desligue 'Reaproveitar navegador já aberto'."
+                "The browser was already open when execution started, so its profile cannot be switched. "
+                "Close the collector's Chrome or disable 'Reuse open browser'."
             )
             return False
 
@@ -246,7 +246,7 @@ class Browser:
 
     def connect(self) -> bool:
         if websocket is None:
-            raise BrowserError("dependência 'websocket-client' não instalada (rode install.bat)")
+            raise BrowserError("dependency 'websocket-client' is not installed (run install.bat)")
 
         tab = self.open_game_tab()
         if not tab:
@@ -337,7 +337,7 @@ class Browser:
         """
         with self._lock:
             if not self.ws and not self.connect():
-                raise BrowserError("Sem conexão CDP ativa.")
+                raise BrowserError("No active CDP connection.")
 
             self._msg_id += 1
             msg_id = self._msg_id
@@ -345,7 +345,7 @@ class Browser:
                 self.ws.send(json.dumps({"id": msg_id, "method": method, "params": params or {}}))
             except Exception as exc:
                 self.ws = None
-                raise BrowserError(f"Falha ao enviar {method}: {exc}")
+                raise BrowserError(f"Failed to send {method}: {exc}")
 
             deadline = time.time() + timeout
             while time.time() < deadline:
@@ -354,7 +354,7 @@ class Browser:
                 except Exception as exc:
                     # A half-read socket cannot be trusted for the next command.
                     self.ws = None
-                    raise BrowserError(f"Conexão CDP perdida durante {method}: {exc}")
+                    raise BrowserError(f"CDP connection lost during {method}: {exc}")
                 if not raw:
                     continue
                 try:
@@ -618,7 +618,7 @@ class Browser:
         afterwards - the pixels are real, which is exactly what OCR needs.
         """
         if cv2 is None:
-            raise BrowserError("dependência 'opencv-python' não instalada (rode install.bat)")
+            raise BrowserError("dependency 'opencv-python' is not installed (run install.bat)")
 
         if region:
             left, top, width, height = (int(v) for v in region)

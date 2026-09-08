@@ -48,8 +48,8 @@ class JournalParser(BaseModule):
         missing = self.calibration.require(*REQUIRED_STEPS)
         if missing:
             logger.warning(
-                f"O módulo Diário ainda não tem passos de calibração ({', '.join(missing)}). "
-                f"Nada foi lido."
+                f"The Journal module has no calibration steps configured yet ({', '.join(missing)}). "
+                f"Nothing was read."
             )
-            return {"module": self.name, "success": False, "reason": "sem calibração"}
-        return {"module": self.name, "success": False, "reason": "leitura de ranking ainda não implementada"}
+            return {"module": self.name, "success": False, "reason": "no calibration"}
+        return {"module": self.name, "success": False, "reason": "ranking parsing not yet implemented"}

@@ -16,9 +16,9 @@ default, which MariaDB has never heard of and rejects with error 1273. So the
 collation is named explicitly, and a short fallback chain covers servers that
 lack the first choice; the last resort is to name none and let the server pick.
 
-Opening a connection lives in one place so that 'Testar conexão' in the
-interface exercises exactly what the collection does. It did not, and that is
-why a run could work while the test button failed with 1273.
+Opening a connection lives in one place so that 'Test connection' in the
+configuration interface and the worker threads during a run hit the server
+the exact same way - same options, same charset, same fallback ladder.
 """
 
 from typing import Optional, Tuple
@@ -71,12 +71,12 @@ def open_connection(database: DatabaseConfig, timeout: Optional[int] = None
             return mysql.connector.connect(**options), collation
         except Error as exc:
             if getattr(exc, "errno", None) in (ER_UNKNOWN_COLLATION, ER_UNKNOWN_CHARSET):
-                logger.debug(f"Server rejected collation {collation or '(padrão)'}: {exc}")
+                logger.debug(f"Server rejected collation {collation or '(default)'}: {exc}")
                 last_error = exc
                 continue
             raise
 
-    raise last_error if last_error else Error("Não foi possível abrir a conexão.")
+    raise last_error if last_error else Error("Could not open database connection.")
 
 
 class DatabaseConnection:
@@ -98,7 +98,7 @@ class DatabaseConnection:
             cursor.close()
             logger.info(
                 f"Connected to database '{self.database.database}' for '{self.label}' "
-                f"({CHARSET}/{collation or 'padrão do servidor'})."
+                f"({CHARSET}/{collation or 'server default'})."
             )
             return self._connection
         except Error as exc:
@@ -133,17 +133,17 @@ class DatabaseConnection:
 
 def test_connection(database: DatabaseConfig) -> tuple:
     """
-    (ok, message) - what the 'Testar conexão' button reports.
+    (ok, message) - what the 'Test connection' button reports.
 
     Goes through `open_connection` so the button proves what the collection
     will find, down to the collation.
     """
     if not database or not database.is_usable:
-        return False, "Preencha host, usuário e banco."
+        return False, "Fill in host, user, and database."
     try:
         connection, collation = open_connection(database, timeout=6)
         server = connection.get_server_info()
         connection.close()
-        return True, f"Conectado — {server}, {CHARSET}/{collation or 'padrão do servidor'}."
+        return True, f"Connected — {server}, {CHARSET}/{collation or 'server default'}."
     except Error as exc:
         return False, str(exc)

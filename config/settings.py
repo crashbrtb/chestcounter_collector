@@ -197,7 +197,7 @@ class ConfigManager:
                 with open(self.path, "r", encoding="utf-8") as fh:
                     raw = json.load(fh) or {}
             except (OSError, ValueError) as exc:
-                raise ValueError(f"config.json inválido ({exc}). Corrija o arquivo ou apague-o para recomeçar.")
+                raise ValueError(f"Invalid config.json ({exc}). Fix the file or delete it to start over.")
 
         merged = default_config()
         for section in SECTIONS:

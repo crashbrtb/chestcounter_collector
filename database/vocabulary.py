@@ -205,12 +205,12 @@ class Vocabulary:
         self.sources.add(source, count=1)
 
     def summary(self) -> str:
-        return (f"{len(self.players.names)} jogadores "
-                f"({len(self.players.authoritative)} da lista do clã), "
-                f"{len(self.chests.names)} baús, "
-                f"{len(self.sources.names)} origens "
-                f"({len(self.sources.authoritative)} da tabela oficial), "
-                f"{len(self.mappings)} correções manuais")
+        return (f"{len(self.players.names)} players "
+                f"({len(self.players.authoritative)} clan members), "
+                f"{len(self.chests.names)} chests, "
+                f"{len(self.sources.names)} sources "
+                f"({len(self.sources.authoritative)} authoritative), "
+                f"{len(self.mappings)} manual mappings")
 
 
 def load_vocabulary(connection) -> Vocabulary:
@@ -221,14 +221,14 @@ def load_vocabulary(connection) -> Vocabulary:
     about 320 ms against 261 000 chests - and is repaid on every chest read
     afterwards.
     """
-    players = KnownNames("jogadores")
-    chests = KnownNames("baús")
-    sources = KnownNames("origens")
+    players = KnownNames("players")
+    chests = KnownNames("chests")
+    sources = KnownNames("sources")
     mappings: Dict[str, str] = {}
 
     cursor = connection.cursor()
 
-    def consultar(sql: str):
+    def query_rows(sql: str):
         """A query that is allowed to fail: schemas differ between profiles."""
         try:
             cursor.execute(sql)
@@ -239,20 +239,20 @@ def load_vocabulary(connection) -> Vocabulary:
 
     try:
         # --- reference tables first: these are the official spellings ---
-        columns = {row[0] for row in consultar("SHOW COLUMNS FROM standard_chests")}
+        columns = {row[0] for row in query_rows("SHOW COLUMNS FROM standard_chests")}
         if "source" in columns:
             # One profile's table has an `alias` column and the other's does not.
             has_alias = "alias" in columns
             select = "SELECT source, alias FROM standard_chests" if has_alias \
                 else "SELECT source FROM standard_chests"
-            for row in consultar(select):
+            for row in query_rows(select):
                 sources.add(row[0], authoritative=True)
                 if has_alias and len(row) > 1 and row[1]:
                     sources.add_alias(row[1], row[0])
 
-        for (name,) in consultar("SELECT player FROM members"):
+        for (name,) in query_rows("SELECT player FROM members"):
             players.add(name, authoritative=True)
-        for (name,) in consultar("SELECT DISTINCT correct_name FROM player_name_mappings"):
+        for (name,) in query_rows("SELECT DISTINCT correct_name FROM player_name_mappings"):
             players.add(name, authoritative=True)
 
         # --- then the history, for whatever the reference tables do not list ---
@@ -261,15 +261,15 @@ def load_vocabulary(connection) -> Vocabulary:
             ("SELECT name, COUNT(*) FROM collected_chests GROUP BY name", chests),
             ("SELECT source, COUNT(*) FROM collected_chests GROUP BY source", sources),
         ):
-            for name, count in consultar(sql):
+            for name, count in query_rows(sql):
                 target.add(name, int(count or 1))
 
         mappings = {raw: correct for raw, correct
-                    in consultar("SELECT ocr_text, correct_name FROM player_name_mappings")
+                    in query_rows("SELECT ocr_text, correct_name FROM player_name_mappings")
                     if raw and correct}
     finally:
         cursor.close()
 
     vocabulary = Vocabulary(players, chests, sources, mappings)
-    logger.info(f"Vocabulário carregado do banco: {vocabulary.summary()}")
+    logger.info(f"Vocabulary loaded from database: {vocabulary.summary()}")
     return vocabulary

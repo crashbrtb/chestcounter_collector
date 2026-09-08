@@ -2,7 +2,7 @@
 setlocal enabledelayedexpansion
 
 REM ==============================================================================
-REM  Total Battle Chest Collector - instalacao do ambiente
+REM  Total Battle Chest Collector - environment setup
 REM ==============================================================================
 
 set "SCRIPT_DIR=%~dp0"
@@ -15,13 +15,13 @@ set "WINPY_URL=https://github.com/winpython/winpython/releases/download/15.3.202
 
 echo.
 echo ==============================================================================
-echo     Total Battle Chest Collector - instalacao
+echo     Total Battle Chest Collector - Setup
 echo ==============================================================================
 echo.
 
 if not exist "%SCRIPT_DIR%execution_logs" (
     mkdir "%SCRIPT_DIR%execution_logs"
-    echo [OK] Pasta 'execution_logs' criada.
+    echo [OK] 'execution_logs' folder created.
 )
 if not exist "%SCRIPT_DIR%config" mkdir "%SCRIPT_DIR%config"
 
@@ -33,62 +33,62 @@ if %errorlevel% equ 0 (
 )
 
 if defined SYS_PYTHON (
-    echo [OK] Python do sistema: %SYS_PYTHON%
-    echo Criando ambiente virtual...
+    echo [OK] System Python: %SYS_PYTHON%
+    echo Creating virtual environment...
     python -m venv "%VENV_DIR%"
 ) else (
-    echo [INFO] Python nao encontrado. Baixando WinPython portatil...
+    echo [INFO] Python not found. Downloading portable WinPython...
     if not exist "%WINPY_DIR%\python.exe" (
-        echo   [1/3] baixando...
+        echo   [1/3] downloading...
         curl -L -o "%WINPY_ZIP%" "%WINPY_URL%"
-        echo   [2/3] extraindo...
+        echo   [2/3] extracting...
         if not exist "%WINPY_DIR%" mkdir "%WINPY_DIR%"
         tar -xf "%WINPY_ZIP%" --strip-components=2 -C "%WINPY_DIR%"
-        echo   [3/3] limpando...
+        echo   [3/3] cleaning up...
         if exist "%WINPY_ZIP%" del "%WINPY_ZIP%"
     )
-    echo Criando ambiente virtual a partir do WinPython...
+    echo Creating virtual environment from WinPython...
     "%WINPY_DIR%\python.exe" -m venv "%VENV_DIR%"
 )
 
 if not exist "%VENV_DIR%\Scripts\python.exe" (
-    echo [ERRO] Falha ao criar o ambiente virtual.
+    echo [ERROR] Failed to create virtual environment.
     pause
     exit /b 1
 )
 
-REM --- 2. Dependencias ----------------------------------------------------------
+REM --- 2. Dependencies ----------------------------------------------------------
 echo.
-echo === Atualizando o pip ===
+echo === Upgrading pip ===
 "%VENV_DIR%\Scripts\python.exe" -m pip install --upgrade pip --no-warn-script-location
 
 echo.
-echo === Instalando dependencias ===
-echo     (o RapidOCR baixa ~15 MB de modelos na primeira leitura)
+echo === Installing dependencies ===
+echo     (RapidOCR downloads ~15 MB of models on first reading)
 "%VENV_DIR%\Scripts\python.exe" -m pip install -r "%SCRIPT_DIR%requirements.txt"
 if errorlevel 1 (
-    echo [ERRO] Falha ao instalar as dependencias.
+    echo [ERROR] Failed to install dependencies.
     pause
     exit /b 1
 )
 
-REM --- 3. Configuracao inicial --------------------------------------------------
+REM --- 3. Initial Configuration -------------------------------------------------
 echo.
-echo === Gerando a configuracao inicial ===
-REM Cria config\config.json com os padroes e, se existir um position.cfg da
-REM versao antiga, aproveita dele as credenciais de banco ja cadastradas.
+echo === Generating initial configuration ===
+REM Creates config\config.json with default settings, and imports database credentials
+REM if a legacy position.cfg file exists.
 "%VENV_DIR%\Scripts\python.exe" "%SCRIPT_DIR%main.py" --check
 
 echo.
 echo ==============================================================================
-echo  [CONCLUIDO]
+echo  [COMPLETE]
 echo.
-echo  Proximos passos (duplo clique, nao precisa de linha de comando):
-echo    1) Configurar.bat  - cadastre contas, perfis e bancos; revise parametros
-echo    2) botao "Abrir o jogo no Chrome", faca login e va ate a tela do cla
-echo    3) botao "Calibrar" (ou o Calibrar.bat) - marque os controles na captura
-echo    4) botao "Executar coleta agora" para testar
-echo    5) Agendador de Tarefas do Windows apontando para run.bat
+echo  Next steps (double-click, no command line needed):
+echo    1) Configure.bat (or Configurar.bat) - set up accounts, profiles, and databases
+echo    2) Click "1 · Open game in Chrome", log in and navigate to the clan screen
+echo    3) Click "2 · Calibrate" (or Calibrate.bat) - mark controls on the capture
+echo    4) Click "▶ Run collection now" to test
+echo    5) Point Windows Task Scheduler to run.bat
 echo ==============================================================================
 echo.
 pause

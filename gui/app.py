@@ -64,10 +64,10 @@ class DatabaseDialog(ctk.CTkToplevel):
 
     FIELDS = (
         ("host", "Host", False),
-        ("port", "Porta", False),
-        ("user", "Usuário", False),
-        ("password", "Senha", True),
-        ("database", "Banco", False),
+        ("port", "Port", False),
+        ("user", "User", False),
+        ("password", "Password", True),
+        ("database", "Database", False),
     )
 
     def __init__(self, master, profile: ProfileConfig, on_save):
@@ -76,15 +76,15 @@ class DatabaseDialog(ctk.CTkToplevel):
         self.on_save = on_save
         self.entries: Dict[str, ctk.CTkEntry] = {}
 
-        self.title(f"Banco de dados — {profile.name or 'novo perfil'}")
+        self.title(f"Database — {profile.name or 'new profile'}")
         self.geometry("460x420")
         self.transient(master)
         self.grab_set()
 
         database = profile.database or DatabaseConfig()
-        ctk.CTkLabel(self, text="Credenciais do banco deste perfil",
+        ctk.CTkLabel(self, text="Database credentials for this profile",
                      font=ctk.CTkFont(size=15, weight="bold"), text_color=ACCENT).pack(pady=(16, 2))
-        ctk.CTkLabel(self, text="Um perfil sem banco é ignorado na coleta.",
+        ctk.CTkLabel(self, text="A profile without a database is skipped during collection.",
                      font=ctk.CTkFont(size=11), text_color=MUTED).pack(pady=(0, 10))
 
         form = ctk.CTkFrame(self, fg_color="transparent")
@@ -104,17 +104,17 @@ class DatabaseDialog(ctk.CTkToplevel):
 
         buttons = ctk.CTkFrame(self, fg_color="transparent")
         buttons.pack(fill="x", padx=24, pady=(6, 16))
-        ctk.CTkButton(buttons, text="Testar conexão", fg_color="#21262d",
+        ctk.CTkButton(buttons, text="Test connection", fg_color="#21262d",
                       command=self._test).pack(side="left")
-        ctk.CTkButton(buttons, text="Limpar banco", fg_color="#21262d",
+        ctk.CTkButton(buttons, text="Clear database", fg_color="#21262d",
                       command=self._clear).pack(side="left", padx=8)
-        ctk.CTkButton(buttons, text="Salvar", command=self._save).pack(side="right")
+        ctk.CTkButton(buttons, text="Save", command=self._save).pack(side="right")
 
     def _collect(self) -> DatabaseConfig:
         return DatabaseConfig.from_dict({key: entry.get().strip() for key, entry in self.entries.items()})
 
     def _test(self):
-        self.lbl_test.configure(text="Testando...", text_color=MUTED)
+        self.lbl_test.configure(text="Testing...", text_color=MUTED)
         self.update_idletasks()
         ok, message = test_connection(self._collect())
         self.lbl_test.configure(text=("✔ " if ok else "✖ ") + message,
@@ -146,7 +146,7 @@ class ProfileRow(ctk.CTkFrame):
         if profile.enabled:
             self.enabled.select()
 
-        self.name = ctk.CTkEntry(self, placeholder_text="Nome do perfil como aparece no jogo", width=260)
+        self.name = ctk.CTkEntry(self, placeholder_text="Profile name as shown in the game", width=260)
         self.name.insert(0, profile.name)
         self.name.pack(side="left", padx=4, pady=8)
 
@@ -154,7 +154,7 @@ class ProfileRow(ctk.CTkFrame):
                                          text_color=MUTED, anchor="w", width=250)
         self.lbl_database.pack(side="left", padx=8, fill="x", expand=True)
 
-        ctk.CTkButton(self, text="Banco…", width=80, fg_color="#21262d",
+        ctk.CTkButton(self, text="Database…", width=80, fg_color="#21262d",
                       command=self._edit_database).pack(side="left", padx=4)
         ctk.CTkButton(self, text="✕", width=32, fg_color="#21262d", hover_color=ERROR_COLOR,
                       command=lambda: self.on_remove(self)).pack(side="left", padx=(4, 10))
@@ -167,7 +167,7 @@ class ProfileRow(ctk.CTkFrame):
             self.lbl_database.configure(text=f"{database.user}@{database.host}/{database.database}",
                                         text_color=MUTED)
         else:
-            self.lbl_database.configure(text="sem banco — perfil será ignorado", text_color=WARN_COLOR)
+            self.lbl_database.configure(text="no database — profile will be skipped", text_color=WARN_COLOR)
 
     def _edit_database(self):
         def apply(database):
@@ -203,15 +203,15 @@ class AccountCard(ctk.CTkFrame):
         if account.enabled:
             self.enabled.select()
 
-        self.name = ctk.CTkEntry(header, placeholder_text="Apelido da conta", width=190)
+        self.name = ctk.CTkEntry(header, placeholder_text="Account nickname", width=190)
         self.name.insert(0, account.name)
         self.name.pack(side="left", padx=6)
 
-        self.login = ctk.CTkEntry(header, placeholder_text="E-mail / usuário do jogo", width=250)
+        self.login = ctk.CTkEntry(header, placeholder_text="Game email / username", width=250)
         self.login.insert(0, account.login)
         self.login.pack(side="left", padx=6)
 
-        self.password = ctk.CTkEntry(header, placeholder_text="Senha", show="*", width=170)
+        self.password = ctk.CTkEntry(header, placeholder_text="Password", show="*", width=170)
         self.password.insert(0, account.password)
         self.password.pack(side="left", padx=6)
 
@@ -219,28 +219,25 @@ class AccountCard(ctk.CTkFrame):
                                            command=self._toggle_password)
         self.show_password.pack(side="left")
 
-        ctk.CTkButton(header, text="Remover conta", width=120, fg_color="#21262d",
+        ctk.CTkButton(header, text="Remove account", width=120, fg_color="#21262d",
                       hover_color=ERROR_COLOR,
                       command=lambda: self.on_remove(self)).pack(side="right")
 
-        # Só faz falta com mais de uma conta: a sessão não é apagada entre elas
-        # (isso custaria um código por e-mail), então cada conta precisa do seu
-        # próprio perfil de navegador para manter a própria sessão verificada.
         second = ctk.CTkFrame(self, fg_color="transparent")
         second.pack(fill="x", padx=12, pady=(2, 0))
-        ctk.CTkLabel(second, text="Perfil do navegador", font=ctk.CTkFont(size=11),
+        ctk.CTkLabel(second, text="Browser profile", font=ctk.CTkFont(size=11),
                      text_color=MUTED).pack(side="left", padx=(30, 6))
         self.browser_profile = ctk.CTkEntry(second, width=170, font=ctk.CTkFont(size=11),
-                                            placeholder_text="vazio = perfil padrão")
+                                            placeholder_text="empty = default profile")
         self.browser_profile.insert(0, account.browser_profile)
         self.browser_profile.pack(side="left")
         ctk.CTkLabel(second,
-                     text="Só preencha se tiver mais de uma conta: cada uma guarda a própria "
-                          "sessão numa pasta, evitando o código de verificação por e-mail.",
+                     text="Only needed for multiple accounts: each keeps its own session in a folder, "
+                          "avoiding email verification codes.",
                      font=ctk.CTkFont(size=11), text_color=MUTED,
                      wraplength=560, justify="left").pack(side="left", padx=10)
 
-        ctk.CTkLabel(self, text="Perfis (cidades) desta conta, coletados nesta ordem:",
+        ctk.CTkLabel(self, text="Profiles (cities) for this account, collected in this order:",
                      font=ctk.CTkFont(size=11), text_color=MUTED).pack(anchor="w", padx=14, pady=(6, 2))
 
         self.profiles_box = ctk.CTkFrame(self, fg_color="transparent")
@@ -249,7 +246,7 @@ class AccountCard(ctk.CTkFrame):
         for profile in account.profiles:
             self._add_row(profile)
 
-        ctk.CTkButton(self, text="+ Adicionar perfil", height=28, width=150, fg_color="#21262d",
+        ctk.CTkButton(self, text="+ Add profile", height=28, width=150, fg_color="#21262d",
                       command=lambda: self._add_row(ProfileConfig(account_name=account.name))
                       ).pack(anchor="w", padx=14, pady=(0, 12))
 
@@ -290,7 +287,7 @@ class App(ctk.CTk):
         self.cards: List[AccountCard] = []
         self.worker: Optional[threading.Thread] = None
 
-        self.title("Total Battle Chest Collector — Configuração")
+        self.title("Total Battle Chest Collector — Configuration")
         self.geometry("1180x820")
         self.minsize(1000, 700)
 
@@ -311,13 +308,13 @@ class App(ctk.CTk):
 
         self.tabs = ctk.CTkTabview(self, fg_color=PANEL_BG)
         self.tabs.pack(fill="both", expand=True, padx=16, pady=(4, 8))
-        self.tabs.add("Execução")
-        self.tabs.add("Parâmetros")
-        self.tabs.add("Contas e perfis")
+        self.tabs.add("Execution")
+        self.tabs.add("Parameters")
+        self.tabs.add("Accounts and profiles")
 
-        self._build_run_tab(self.tabs.tab("Execução"))
-        self._build_parameters_tab(self.tabs.tab("Parâmetros"))
-        self._build_accounts_tab(self.tabs.tab("Contas e perfis"))
+        self._build_run_tab(self.tabs.tab("Execution"))
+        self._build_parameters_tab(self.tabs.tab("Parameters"))
+        self._build_accounts_tab(self.tabs.tab("Accounts and profiles"))
         self._refresh_status()
 
     # -- run tab
@@ -325,16 +322,16 @@ class App(ctk.CTk):
         top = ctk.CTkFrame(parent, fg_color="transparent")
         top.pack(fill="x", padx=8, pady=(10, 6))
 
-        ctk.CTkButton(top, text="1 · Abrir o jogo no Chrome", width=200, height=38,
+        ctk.CTkButton(top, text="1 · Open game in Chrome", width=200, height=38,
                       command=self.connect_browser).pack(side="left", padx=4)
-        ctk.CTkButton(top, text="2 · Calibrar", width=150, height=38,
+        ctk.CTkButton(top, text="2 · Calibrate", width=150, height=38,
                       command=self.open_calibration).pack(side="left", padx=4)
-        ctk.CTkButton(top, text="3 · Verificar configuração", width=200, height=38,
+        ctk.CTkButton(top, text="3 · Verify configuration", width=200, height=38,
                       fg_color="#21262d", command=self.check_configuration).pack(side="left", padx=4)
-        self.btn_run = ctk.CTkButton(top, text="▶ Executar coleta agora", width=210, height=38,
+        self.btn_run = ctk.CTkButton(top, text="▶ Run collection now", width=210, height=38,
                                      fg_color="#238636", hover_color="#2ea043", command=self.run_collection)
         self.btn_run.pack(side="right", padx=4)
-        self.btn_stop = ctk.CTkButton(top, text="■ Parar", width=100, height=38, state="disabled",
+        self.btn_stop = ctk.CTkButton(top, text="■ Stop", width=100, height=38, state="disabled",
                                       fg_color="#21262d", hover_color=ERROR_COLOR, command=self.stop_run)
         self.btn_stop.pack(side="right", padx=4)
 
@@ -344,7 +341,7 @@ class App(ctk.CTk):
                                      font=ctk.CTkFont(size=12), text_color="#c9d1d9")
         self.lbl_info.pack(fill="x", padx=14, pady=12)
 
-        ctk.CTkLabel(parent, text="Log da execução", font=ctk.CTkFont(size=12, weight="bold"),
+        ctk.CTkLabel(parent, text="Execution Log", font=ctk.CTkFont(size=12, weight="bold"),
                      text_color=MUTED).pack(anchor="w", padx=12, pady=(4, 2))
         self.log_box = ctk.CTkTextbox(parent, fg_color=DARK_BG, font=ctk.CTkFont(family="Consolas", size=11))
         self.log_box.pack(fill="both", expand=True, padx=8, pady=(0, 10))
@@ -352,9 +349,9 @@ class App(ctk.CTk):
         footer = ctk.CTkFrame(parent, fg_color="transparent")
         footer.pack(fill="x", padx=8, pady=(0, 10))
         ctk.CTkLabel(footer,
-                     text="Segure ESC para cancelar uma execução em andamento, de qualquer janela.  ·  Para agendar, aponte o Agendador de Tarefas para o run.bat.",
+                     text="Hold ESC to cancel an ongoing collection from any window.  ·  To schedule, point Windows Task Scheduler to run.bat.",
                      font=ctk.CTkFont(size=11), text_color=MUTED).pack(side="left")
-        ctk.CTkButton(footer, text="Abrir pasta de logs", width=150, fg_color="#21262d",
+        ctk.CTkButton(footer, text="Open logs folder", width=150, fg_color="#21262d",
                       command=lambda: webbrowser.open(self.config_manager.resolved_log_dir())
                       ).pack(side="right")
 
@@ -362,12 +359,11 @@ class App(ctk.CTk):
     def _build_parameters_tab(self, parent):
         toolbar = ctk.CTkFrame(parent, fg_color="transparent")
         toolbar.pack(fill="x", padx=8, pady=(10, 4))
-        ctk.CTkLabel(toolbar, text="Todos os parâmetros da aplicação. Passe o mouse nas descrições "
-                                   "para entender cada um.",
+        ctk.CTkLabel(toolbar, text="All application parameters. Hover over descriptions to understand each one.",
                      font=ctk.CTkFont(size=12), text_color=MUTED).pack(side="left")
-        ctk.CTkButton(toolbar, text="Restaurar padrões", width=160, fg_color="#21262d",
+        ctk.CTkButton(toolbar, text="Restore defaults", width=160, fg_color="#21262d",
                       command=self.restore_defaults).pack(side="right", padx=4)
-        ctk.CTkButton(toolbar, text="💾 Salvar parâmetros", width=180,
+        ctk.CTkButton(toolbar, text="💾 Save parameters", width=180,
                       command=self.save_parameters).pack(side="right", padx=4)
 
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
@@ -418,13 +414,13 @@ class App(ctk.CTk):
         toolbar = ctk.CTkFrame(parent, fg_color="transparent")
         toolbar.pack(fill="x", padx=8, pady=(10, 4))
         ctk.CTkLabel(toolbar,
-                     text="Cada conta é um login do jogo; cada perfil é uma cidade dentro dela. "
-                          "A coleta segue esta ordem: conta, depois seus perfis.",
+                     text="Each account is a game login; each profile is a city within it. "
+                          "Collection follows this order: account, then its profiles.",
                      font=ctk.CTkFont(size=12), text_color=MUTED, wraplength=700,
                      justify="left").pack(side="left")
-        ctk.CTkButton(toolbar, text="+ Nova conta", width=140, fg_color="#21262d",
+        ctk.CTkButton(toolbar, text="+ New account", width=140, fg_color="#21262d",
                       command=self.add_account).pack(side="right", padx=4)
-        ctk.CTkButton(toolbar, text="💾 Salvar contas", width=160,
+        ctk.CTkButton(toolbar, text="💾 Save accounts", width=160,
                       command=self.save_accounts).pack(side="right", padx=4)
 
         self.accounts_box = ctk.CTkScrollableFrame(parent, fg_color="transparent")
@@ -439,13 +435,13 @@ class App(ctk.CTk):
         self.cards.append(card)
 
     def _remove_card(self, card: AccountCard):
-        if not messagebox.askyesno("Remover conta", "Remover esta conta e todos os seus perfis?"):
+        if not messagebox.askyesno("Remove account", "Remove this account and all of its profiles?"):
             return
         self.cards.remove(card)
         card.destroy()
 
     def add_account(self):
-        self._add_card(AccountConfig(name=f"Conta {len(self.cards) + 1}", profiles=[ProfileConfig()]))
+        self._add_card(AccountConfig(name=f"Account {len(self.cards) + 1}", profiles=[ProfileConfig()]))
 
     # -------------------------------------------------------------- actions
     def save_parameters(self):
@@ -460,7 +456,7 @@ class App(ctk.CTk):
                 self.config_manager.set(section_key, key, value)
         self.config_manager.save()
         self._refresh_status()
-        messagebox.showinfo("Configuração", "Parâmetros salvos em config/config.json.")
+        messagebox.showinfo("Configuration", "Parameters saved to config/config.json.")
 
     def save_accounts(self):
         accounts = [card.to_account() for card in self.cards if card.name.get().strip()]
@@ -471,16 +467,16 @@ class App(ctk.CTk):
         self.config_manager.save()
         self._refresh_status()
 
-        message = f"{len(accounts)} conta(s) salva(s) em config/config.json."
+        message = f"{len(accounts)} account(s) saved to config/config.json."
         if without_database:
-            message += ("\n\nPerfis sem banco de dados (serão ignorados na coleta):\n  "
+            message += ("\n\nProfiles without a database (will be skipped during collection):\n  "
                         + "\n  ".join(without_database))
-        messagebox.showinfo("Contas e perfis", message)
+        messagebox.showinfo("Accounts and profiles", message)
 
     def restore_defaults(self):
-        if not messagebox.askyesno("Restaurar padrões",
-                                   "Voltar todos os parâmetros aos valores padrão?\n"
-                                   "As contas e a calibração não são afetadas."):
+        if not messagebox.askyesno("Restore defaults",
+                                   "Reset all parameters to default values?\n"
+                                   "Accounts and calibration are not affected."):
             return
         from config.schema import default_config
 
@@ -513,9 +509,9 @@ class App(ctk.CTk):
             try:
                 self._ensure_context(connect=True)
                 self.context.browser.focus_tab()
-                logger.info("Jogo aberto e conectado. Faça login e navegue até a tela que quer calibrar.")
+                logger.info("Game opened and connected. Log in and navigate to the screen you want to calibrate.")
             except Exception as exc:  # noqa: BLE001
-                logger.error(f"Não foi possível abrir o jogo: {exc}")
+                logger.error(f"Could not open the game: {exc}")
 
         self._run_in_background(work)
 
@@ -523,8 +519,8 @@ class App(ctk.CTk):
         try:
             context = self._ensure_context(connect=True)
         except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("Calibração",
-                                 f"É preciso estar conectado ao jogo para calibrar.\n\n{exc}")
+            messagebox.showerror("Calibration",
+                                 f"Must be connected to the game to calibrate.\n\n{exc}")
             return
         CalibrationWizard(self, context, on_done=lambda _complete: self._refresh_status())
 
@@ -538,14 +534,14 @@ class App(ctk.CTk):
                 for problem in problems:
                     logger.error(problem)
             else:
-                logger.info("Configuração e calibração completas — pronto para executar.")
+                logger.info("Configuration and calibration are complete — ready to run.")
 
         self._run_in_background(work)
 
     def run_collection(self):
-        if not messagebox.askyesno("Executar coleta",
-                                   "Executar a coleta agora, com a configuração salva?\n\n"
-                                   "O navegador será controlado automaticamente."):
+        if not messagebox.askyesno("Run collection",
+                                   "Run collection now with saved configuration?\n\n"
+                                   "The browser will be automated."):
             return
 
         def work():
@@ -556,15 +552,15 @@ class App(ctk.CTk):
             try:
                 summary = runner.run()
                 logger.info(
-                    f"Coleta concluída: {summary['collected']} baús, "
-                    f"{len(summary['failures'])} falha(s), duração {summary['duration']}."
+                    f"Collection finished: {summary['collected']} chests, "
+                    f"{len(summary['failures'])} failure(s), duration {summary['duration']}."
                 )
             except Cancelled as exc:
-                logger.warning(f"Execução cancelada ({exc}). O que já foi coletado está gravado.")
+                logger.warning(f"Execution cancelled ({exc}). Already collected chests remain saved.")
             except RunnerError as exc:
                 logger.error(str(exc))
             except Exception as exc:  # noqa: BLE001
-                logger.exception(f"Falha inesperada: {exc}")
+                logger.exception(f"Unexpected failure: {exc}")
             finally:
                 try:
                     context.close()
@@ -574,25 +570,25 @@ class App(ctk.CTk):
 
         cancellation.reset()
         escape_watcher.start()
-        self._run_in_background(work, busy_text="⏳ Coletando...", stoppable=True)
+        self._run_in_background(work, busy_text="⏳ Collecting...", stoppable=True)
 
     # ---------------------------------------------------------------- helpers
     def stop_run(self):
         """Same cancellation the Escape key triggers, for whoever prefers the button."""
-        cancellation.cancel("parada pedida na interface")
-        self.btn_stop.configure(state="disabled", text="parando...")
-        logger.warning("Cancelamento pedido; encerrando no próximo ponto seguro...")
+        cancellation.cancel("stop requested from interface")
+        self.btn_stop.configure(state="disabled", text="stopping...")
+        logger.warning("Cancellation requested; stopping at next safe point...")
 
-    def _run_in_background(self, target, busy_text: str = "⏳ Executando...", stoppable: bool = False):
+    def _run_in_background(self, target, busy_text: str = "⏳ Running...", stoppable: bool = False):
         if self.worker and self.worker.is_alive():
-            messagebox.showwarning("Aguarde", "Já existe uma operação em andamento.")
+            messagebox.showwarning("Please wait", "An operation is already in progress.")
             return
 
         original = self.btn_run.cget("text")
         self.btn_run.configure(state="disabled", text=busy_text)
         if stoppable:
-            self.btn_stop.configure(state="normal", text="■ Parar")
-        self.tabs.set("Execução")
+            self.btn_stop.configure(state="normal", text="■ Stop")
+        self.tabs.set("Execution")
 
         def wrapper():
             try:
@@ -600,7 +596,7 @@ class App(ctk.CTk):
             finally:
                 escape_watcher.stop()
                 self.after(0, lambda: self.btn_run.configure(state="normal", text=original))
-                self.after(0, lambda: self.btn_stop.configure(state="disabled", text="■ Parar"))
+                self.after(0, lambda: self.btn_stop.configure(state="disabled", text="■ Stop"))
                 self.after(0, self._refresh_status)
 
         self.worker = threading.Thread(target=wrapper, daemon=True)
@@ -624,33 +620,33 @@ class App(ctk.CTk):
         missing = self.calibration.missing_steps()
 
         if missing:
-            calibration_text = f"✖ calibração incompleta ({len(missing)} passo(s) faltando)"
+            calibration_text = f"✖ Incomplete calibration ({len(missing)} step(s) missing)"
             color = ERROR_COLOR
         else:
-            calibration_text = f"✔ calibrada em {self.calibration.created_at or 'data desconhecida'}"
+            calibration_text = f"✔ Calibrated on {self.calibration.created_at or 'unknown date'}"
             color = OK_COLOR
         self.lbl_status.configure(text=calibration_text, text_color=color)
 
-        engine = "não verificado"
+        engine = "not verified"
         if self.context is not None:
             ok, reason = self.context.ocr.status()
-            engine = reason if ok else f"indisponível ({reason})"
+            engine = reason if ok else f"unavailable ({reason})"
         else:
             try:
                 from core.ocr import RapidOCRBackend
 
                 available, reason = RapidOCRBackend.available()
-                engine = reason if available else f"RapidOCR indisponível — {reason}"
+                engine = reason if available else f"RapidOCR unavailable — {reason}"
             except Exception:
                 pass
 
         self.lbl_info.configure(text=(
-            f"Contas cadastradas: {len(accounts)}   ·   perfis: {len(profiles)} "
-            f"({len(collectable)} com banco configurado)\n"
-            f"Calibração: {calibration_text}   ·   viewport calibrado: "
+            f"Registered accounts: {len(accounts)}   ·   profiles: {len(profiles)} "
+            f"({len(collectable)} with configured database)\n"
+            f"Calibration: {calibration_text}   ·   calibrated viewport: "
             f"{self.calibration.viewport[0]}x{self.calibration.viewport[1]}\n"
             f"OCR: {engine}\n"
-            f"Configuração: {self.config_manager.path}"
+            f"Configuration: {self.config_manager.path}"
         ))
 
 

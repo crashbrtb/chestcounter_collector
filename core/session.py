@@ -135,7 +135,7 @@ MARK_LOGIN_FIELDS_JS = r"""
     password: true,
     email: !!email,
     submit: !!submit,
-    scope: scope === document ? 'pagina inteira' : (scope.tagName || '') + (scope.className ? '.' + String(scope.className).split(' ')[0] : ''),
+    scope: scope === document ? 'whole page' : (scope.tagName || '') + (scope.className ? '.' + String(scope.className).split(' ')[0] : ''),
     submit_label: submit ? label(submit).slice(0, 30) : '',
     email_name: email ? (email.name || email.placeholder || '') : '',
   };
@@ -278,8 +278,8 @@ class LoginManager:
         if not selector:
             if state.get("form_in_dom"):
                 logger.warning(
-                    "O formulário de login está na página mas fechado, e não achei o botão que o "
-                    "abre. Informe o seletor em Login > Seletor CSS do botão que abre o login."
+                    "The login form is in the page but closed, and the opener button was not found. "
+                    "Provide the selector in Login > CSS selector for login opener button."
                 )
             return False
 
@@ -308,7 +308,7 @@ class LoginManager:
 
         found = self.browser.evaluate(MARK_LOGIN_FIELDS_JS) or {}
         if not found.get("password"):
-            raise SessionError("Campo de senha não encontrado na página de login.")
+            raise SessionError("Password field not found on the login page.")
         return (
             email or ("[data-tbc-role='email']" if found.get("email") else ""),
             password or "[data-tbc-role='password']",
@@ -334,8 +334,8 @@ class LoginManager:
 
         if not account.login or not account.password:
             raise SessionError(
-                f"A conta '{account.name}' não tem usuário e senha preenchidos. "
-                f"Preencha na interface (aba Contas e perfis) ou desligue o login automático."
+                f"Account '{account.name}' has no username and password configured. "
+                f"Fill them in the interface (Accounts and profiles tab) or disable automatic login."
             )
 
         for attempt in range(1, self.max_attempts + 1):
@@ -488,7 +488,7 @@ class ProfileSwitcher:
         """
         missing = self.calibration.require("profile_menu_button", "profiles_list_area")
         if missing:
-            raise SessionError(f"Calibração incompleta para trocar de perfil: {', '.join(missing)}")
+            raise SessionError(f"Incomplete calibration for switching profiles: {', '.join(missing)}")
 
         self.game_state.prepare_board()
 
@@ -518,7 +518,7 @@ class ProfileSwitcher:
             logger.error(
                 f"Clicking the profile menu at {menu_point} changed nothing on screen "
                 f"({opened:.1%}). The point is wrong for this page size, or something is on top "
-                f"of it. Recalibrate 'Menu de perfis' and use 'Testar este passo'."
+                f"of it. Recalibrate 'Profile menu' and use 'Test this step'."
             )
             return False
         logger.info(f"The profile menu click changed {opened:.0%} of the screen.")

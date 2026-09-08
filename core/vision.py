@@ -153,7 +153,7 @@ class Vision:
     ) -> Optional[Match]:
         """Looks for the reference image inside a page region; returns its box in page pixels."""
         if cv2 is None:
-            logger.error("opencv-python não instalado; a busca por imagem está desativada.")
+            logger.error("opencv-python not installed; template matching is disabled.")
             return None
         if not os.path.exists(template_path):
             logger.error(f"Reference image is missing: {template_path}")

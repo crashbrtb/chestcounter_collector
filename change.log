@@ -18,3 +18,8 @@
   - Configuration UI (run.bat config): every setting, accounts, profiles and databases with
     connection test, calibration and a test run with live log.
   - Unreadable chests become a review queue with the PNG crop, handled in the web interface.
+2.0.2 - Translation and localization fixes:
+  - Translated complete documentation (README.md), startup/installer batch scripts, and command-line interfaces to English.
+  - Full English UI localization: configuration interface, calibration wizard, schema definitions, tooltips, dialogs, and popups.
+  - Standardized all application logs, exception messages, cancellation tokens, and database status messages to English.
+

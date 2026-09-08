@@ -35,12 +35,12 @@ for stream in (sys.stdout, sys.stderr):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Total Battle Chest Collector")
-    parser.add_argument("--gui", action="store_true", help="abre a interface de configuração")
-    parser.add_argument("--calibrate", action="store_true", help="abre direto o assistente de calibração")
-    parser.add_argument("--check", action="store_true", help="apenas valida configuração e calibração")
-    parser.add_argument("--account", help="executa somente esta conta")
-    parser.add_argument("--profile", help="executa somente este perfil")
-    parser.add_argument("--keep-open", action="store_true", help="não fecha o navegador ao terminar")
+    parser.add_argument("--gui", action="store_true", help="open the configuration interface")
+    parser.add_argument("--calibrate", action="store_true", help="open the calibration wizard directly")
+    parser.add_argument("--check", action="store_true", help="validate configuration and calibration only")
+    parser.add_argument("--account", help="run only this account")
+    parser.add_argument("--profile", help="run only this profile")
+    parser.add_argument("--keep-open", action="store_true", help="do not close the browser when finished")
     return parser.parse_args()
 
 
@@ -93,7 +93,7 @@ def main() -> int:
         try:
             from gui.app import launch
         except ImportError as exc:
-            logger.error(f"Interface indisponível ({exc}). Rode install.bat para instalar o customtkinter.")
+            logger.error(f"Interface unavailable ({exc}). Run install.bat to install customtkinter.")
             return EXIT_MISCONFIGURED
         launch(config, open_calibration=args.calibrate)
         return EXIT_OK
@@ -110,7 +110,7 @@ def main() -> int:
             logger.error(problem)
         if problems:
             return EXIT_MISCONFIGURED
-        logger.info("Configuração e calibração estão completas.")
+        logger.info("Configuration and calibration are complete.")
         return EXIT_OK
 
     module = config.get("execution", "module", "chests")
@@ -119,7 +119,7 @@ def main() -> int:
     summary = None
     cancellation.reset()
     escape_watcher.start()
-    logger.info("Segure ESC por um instante para cancelar a execução.")
+    logger.info("Hold ESC for a moment to cancel execution.")
     try:
         if module in ("chests", "all"):
             summary = runner.run(only_account=args.account, only_profile=args.profile)
@@ -130,15 +130,15 @@ def main() -> int:
             from modules.journal_parser import JournalParser
 
             context.start_browser()
-            logger.info(JournalParser(context).run().get("reason", "módulo Diário executado"))
+            logger.info(JournalParser(context).run().get("reason", "Journal module executed"))
 
         if module in ("chat", "all"):
             from modules.chat_automator import ChatAutomator
 
             context.start_browser()
-            logger.info(ChatAutomator(context).run().get("reason", "módulo Chat executado"))
+            logger.info(ChatAutomator(context).run().get("reason", "Chat module executed"))
     except Cancelled as exc:
-        logger.warning(f"Execução cancelada ({exc}). O que já foi coletado está gravado.")
+        logger.warning(f"Execution cancelled ({exc}). Already collected chests remain saved.")
         return EXIT_CANCELLED
     except RunnerError as exc:
         logger.error(str(exc))

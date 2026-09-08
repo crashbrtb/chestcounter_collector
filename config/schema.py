@@ -43,172 +43,170 @@ class Section:
 SECTIONS: List[Section] = [
     Section(
         "execution",
-        "Execução",
-        "Como o coletor se comporta quando o agendador do Windows dispara o run.bat.",
+        "Execution",
+        "How the collector behaves when Windows Task Scheduler triggers run.bat.",
         [
-            Field("module", "choice", "Módulo executado", "chests",
-                  "Rotina disparada pelo run.bat. 'chests' coleta os baús do clã.",
+            Field("module", "choice", "Execution module", "chests",
+                  "Routine executed by run.bat. 'chests' collects clan chests.",
                   choices=("chests", "journal", "chat", "all")),
-            Field("close_browser_on_finish", "bool", "Fechar o navegador ao terminar", True,
-                  "Desligue para inspecionar a tela do jogo depois da coleta."),
-            Field("stop_on_error", "bool", "Parar no primeiro erro", False,
-                  "Ligado, um perfil que falha interrompe a execução inteira. Desligado, o coletor "
-                  "registra o erro e segue para o próximo perfil."),
-            Field("retries_per_profile", "int", "Tentativas por perfil", 2,
-                  "Quantas vezes um perfil é reprocessado antes de ser considerado perdido.",
+            Field("close_browser_on_finish", "bool", "Close browser on finish", True,
+                  "Disable to inspect the game screen after collection finishes."),
+            Field("stop_on_error", "bool", "Stop on first error", False,
+                  "When enabled, a failing profile stops the entire run. When disabled, the collector "
+                  "logs the error and continues to the next profile."),
+            Field("retries_per_profile", "int", "Retries per profile", 2,
+                  "How many times a profile is retried before being considered failed.",
                   minimum=1, maximum=5),
-            Field("log_level", "choice", "Nível do log", "INFO",
-                  "DEBUG registra cada leitura de OCR e cada clique.",
+            Field("log_level", "choice", "Log level", "INFO",
+                  "DEBUG logs every OCR reading and every click.",
                   choices=("DEBUG", "INFO", "WARNING", "ERROR")),
-            Field("log_dir", "path", "Pasta dos logs", "execution_logs",
-                  "Relativa à pasta do projeto, ou um caminho absoluto."),
-            Field("log_retention_days", "int", "Dias de log mantidos", 7,
-                  "Logs mais antigos que isso são apagados no início de cada execução. 0 = nunca apagar.",
+            Field("log_dir", "path", "Log folder", "execution_logs",
+                  "Relative to the project folder, or an absolute path."),
+            Field("log_retention_days", "int", "Log retention (days)", 7,
+                  "Logs older than this are deleted at the start of each run. 0 = never delete.",
                   minimum=0, maximum=3650),
-            Field("screenshot_on_error", "bool", "Salvar print quando der erro", True,
-                  "Grava a tela do jogo em execution_logs/screenshots para diagnóstico."),
+            Field("screenshot_on_error", "bool", "Save screenshot on error", True,
+                  "Saves a screenshot of the game to execution_logs/screenshots for diagnostics."),
         ],
     ),
     Section(
         "browser",
-        "Navegador",
-        "Chrome controlado por CDP (Chrome DevTools Protocol). Substitui o aplicativo desktop.",
+        "Browser",
+        "Chrome controlled via CDP (Chrome DevTools Protocol). Replaces the desktop application.",
         [
-            Field("cdp_host", "str", "Host do CDP", "127.0.0.1",
-                  "Praticamente sempre 127.0.0.1."),
-            Field("cdp_port", "int", "Porta do CDP", 9222,
-                  "Porta de depuração remota. Mude se já houver outro Chrome usando a 9222.",
+            Field("cdp_host", "str", "CDP Host", "127.0.0.1",
+                  "Almost always 127.0.0.1."),
+            Field("cdp_port", "int", "CDP Port", 9222,
+                  "Remote debugging port. Change if another Chrome instance is using 9222.",
                   minimum=1024, maximum=65535),
-            Field("game_url", "str", "URL do jogo", "https://totalbattle.com/en/",
-                  "Endereço aberto no início de cada conta."),
-            Field("game_url_filter", "str", "Filtro da aba do jogo", "totalbattle.com",
-                  "Trecho da URL usado para reconhecer a aba do jogo entre as abas abertas."),
-            Field("executable_path", "path", "Caminho do Chrome", "",
-                  "Vazio = procurar Chrome, Edge e Brave nos caminhos padrão do Windows."),
-            Field("user_data_dir", "path", "Perfil do navegador", "",
-                  "Pasta de dados do Chrome usada pelo coletor. Vazio = "
-                  "%USERPROFILE%/.total_battle_chest_profile. Um perfil próprio evita "
-                  "interferir no Chrome do dia a dia."),
-            Field("reuse_existing", "bool", "Reaproveitar navegador já aberto", True,
-                  "Se a porta CDP já estiver respondendo, conecta nele em vez de abrir outro."),
-            Field("start_maximized", "bool", "Abrir maximizado", True, ""),
-            Field("window_width", "int", "Largura da janela", 1920,
-                  "Usada apenas quando 'Abrir maximizado' está desligado.", minimum=800, maximum=7680),
-            Field("window_height", "int", "Altura da janela", 1080,
-                  "Usada apenas quando 'Abrir maximizado' está desligado.", minimum=600, maximum=4320),
-            Field("page_load_timeout", "float", "Tempo limite de carregamento (s)", 90.0,
-                  "Espera máxima pelo carregamento do jogo depois de abrir a URL.",
+            Field("game_url", "str", "Game URL", "https://totalbattle.com/en/",
+                  "URL opened at the beginning of each account session."),
+            Field("game_url_filter", "str", "Game tab URL filter", "totalbattle.com",
+                  "URL substring used to find the game tab among open tabs."),
+            Field("executable_path", "path", "Chrome executable path", "",
+                  "Empty = search for Chrome, Edge, and Brave in standard Windows paths."),
+            Field("user_data_dir", "path", "Browser profile directory", "",
+                  "Chrome data folder used by the collector. Empty = "
+                  "%USERPROFILE%/.total_battle_chest_profile. A dedicated profile avoids "
+                  "interfering with your daily Chrome browser."),
+            Field("reuse_existing", "bool", "Reuse open browser", True,
+                  "If the CDP port is already responding, connects to it instead of launching a new browser."),
+            Field("start_maximized", "bool", "Start maximized", True, ""),
+            Field("window_width", "int", "Window width", 1920,
+                  "Used only when 'Start maximized' is disabled.", minimum=800, maximum=7680),
+            Field("window_height", "int", "Window height", 1080,
+                  "Used only when 'Start maximized' is disabled.", minimum=600, maximum=4320),
+            Field("page_load_timeout", "float", "Page load timeout (s)", 90.0,
+                  "Maximum wait time for the game to load after opening the URL.",
                   minimum=10.0, maximum=600.0),
         ],
     ),
     Section(
         "login",
         "Login",
-        "Autenticação no formulário do site. Os seletores vazios são descobertos automaticamente.",
+        "Authentication on the website form. Empty selectors are detected automatically.",
         [
-            Field("enabled", "bool", "Fazer login automático", True,
-                  "Desligue se preferir deixar a sessão já logada no perfil do navegador."),
-            Field("clear_session_between_accounts", "bool", "Encerrar sessão ao trocar de conta", False,
-                  "MANTENHA DESLIGADO. Limpar cookies faz o jogo tratar o navegador como um "
-                  "aparelho novo e enviar um código de verificação por e-mail — que uma execução "
-                  "agendada não tem como responder. Para várias contas, dê a cada uma o seu "
-                  "'Perfil do navegador' em Contas e perfis, em vez de ligar isto."),
-            Field("open_login_selector", "str", "Seletor CSS do botão que abre o login", "",
-                  "O formulário do totalbattle.com já está no HTML quando a página abre, mas "
-                  "fechado: é preciso clicar em 'Login' antes de digitar. Vazio = procurar sozinho "
-                  "um botão visível com texto de login (botões de Google/Facebook são descartados)."),
-            Field("email_selector", "str", "Seletor CSS do campo de e-mail", "",
-                  "Vazio = detectar sozinho (input[type=email], name/id contendo email ou login)."),
-            Field("password_selector", "str", "Seletor CSS do campo de senha", "",
-                  "Vazio = detectar sozinho (input[type=password])."),
-            Field("submit_selector", "str", "Seletor CSS do botão de entrar", "",
-                  "Vazio = detectar sozinho (button[type=submit] ou botão com texto de login)."),
-            Field("logged_in_selector", "str", "Seletor que confirma o login", "",
-                  "Elemento que só existe depois de logado, por exemplo 'canvas'. "
-                  "Vazio = considerar logado quando o campo de senha desaparecer."),
-            Field("wait_after_submit", "float", "Espera após enviar o login (s)", 30.0,
-                  "Tempo máximo aguardado pelo carregamento do jogo depois do login.",
+            Field("enabled", "bool", "Automatic login", True,
+                  "Disable if you prefer leaving the session already logged into the browser profile."),
+            Field("clear_session_between_accounts", "bool", "Clear session between accounts", False,
+                  "KEEP DISABLED. Clearing cookies causes the game to treat the browser as a new device "
+                  "and email a verification code — which an unattended run cannot answer. "
+                  "For multiple accounts, assign each its own 'Browser profile' directory in Accounts and profiles."),
+            Field("open_login_selector", "str", "CSS selector for login opener button", "",
+                  "The totalbattle.com login form is in the HTML on page load but hidden: "
+                  "you must click 'Log in' before typing. Empty = automatically find a visible "
+                  "button with login text (social login buttons like Google/Facebook are discarded)."),
+            Field("email_selector", "str", "CSS selector for email field", "",
+                  "Empty = detect automatically (input[type=email], name/id containing email or login)."),
+            Field("password_selector", "str", "CSS selector for password field", "",
+                  "Empty = detect automatically (input[type=password])."),
+            Field("submit_selector", "str", "CSS selector for submit button", "",
+                  "Empty = detect automatically (button[type=submit] or button with login text)."),
+            Field("logged_in_selector", "str", "Selector confirming logged-in state", "",
+                  "Element that only exists after login, e.g. 'canvas'. "
+                  "Empty = consider logged in when the password field disappears."),
+            Field("wait_after_submit", "float", "Wait after submit (s)", 30.0,
+                  "Maximum wait time for the game to load after submitting login.",
                   minimum=5.0, maximum=300.0),
-            Field("max_attempts", "int", "Tentativas de login", 2,
-                  "Repetições antes de desistir da conta.", minimum=1, maximum=5),
+            Field("max_attempts", "int", "Login retry attempts", 2,
+                  "Attempts before giving up on the account.", minimum=1, maximum=5),
         ],
     ),
     Section(
         "timing",
-        "Tempos",
-        "Pausas entre ações. Aumente se o jogo estiver lento; diminua para coletar mais rápido.",
+        "Timing",
+        "Delays between actions. Increase if the game is sluggish; decrease to collect faster.",
         [
-            Field("click_delay", "float", "Pausa após um clique (s)", 0.5, "", minimum=0.0, maximum=10.0),
-            Field("action_delay", "float", "Pausa entre ações (s)", 0.35, "", minimum=0.0, maximum=10.0),
-            Field("chest_click_delay", "float", "Pausa entre baús (s)", 0.25,
-                  "Intervalo entre abrir um baú e ler o próximo.", minimum=0.0, maximum=5.0),
-            Field("profile_switch_wait", "float", "Espera da troca de perfil (s)", 20.0,
-                  "Tempo que o jogo leva para recarregar depois de trocar de cidade.",
+            Field("click_delay", "float", "Delay after click (s)", 0.5, "", minimum=0.0, maximum=10.0),
+            Field("action_delay", "float", "Delay between actions (s)", 0.35, "", minimum=0.0, maximum=10.0),
+            Field("chest_click_delay", "float", "Chest click delay (s)", 0.25,
+                  "Interval between opening a chest and reading the next.", minimum=0.0, maximum=5.0),
+            Field("profile_switch_wait", "float", "Profile switch wait (s)", 20.0,
+                  "Time the game takes to reload after switching cities.",
                   minimum=1.0, maximum=180.0),
-            Field("between_profiles_wait", "float", "Pausa entre perfis (s)", 3.0, "",
+            Field("between_profiles_wait", "float", "Delay between profiles (s)", 3.0, "",
                   minimum=0.0, maximum=60.0),
-            Field("store_close_wait", "float", "Espera para fechar a loja (s)", 15.0,
-                  "Janela de tempo em que a loja é procurada e fechada antes de começar.",
+            Field("store_close_wait", "float", "Store close wait (s)", 15.0,
+                  "Time window in which the store is searched and closed before starting.",
                   minimum=0.0, maximum=120.0),
         ],
     ),
     Section(
         "ocr",
         "OCR",
-        "Leitura dos nomes na tela. O RapidOCR (PaddleOCR/ONNX) lê acentos e nomes estrangeiros "
-        "que o Tesseract erra.",
+        "Reading names on screen. RapidOCR (PaddleOCR/ONNX) reads accents and foreign names "
+        "that Tesseract struggles with.",
         [
-            Field("engine", "choice", "Motor de OCR", "auto",
-                  "auto = os dois juntos quando ambos estiverem instalados: as letras vêm do "
-                  "RapidOCR (bem melhor em nome estrangeiro) e só os acentos vêm do Tesseract. "
-                  "Use 'rapidocr' ou 'tesseract' para forçar um só.",
+            Field("engine", "choice", "OCR Engine", "auto",
+                  "auto = both engines combined when installed: letters come from RapidOCR "
+                  "(substantially better with foreign names) and accents come from Tesseract. "
+                  "Use 'rapidocr' or 'tesseract' to force a single engine.",
                   choices=("auto", "hybrid", "rapidocr", "tesseract")),
-            Field("threads", "int", "Threads do RapidOCR", 4,
-                  "Núcleos usados pelo motor neural. Medido nesta máquina: o padrão do "
-                  "ONNXRuntime levou 1646 ms por leitura, 4 threads levam 375 ms e 8 pioram "
-                  "para 1097 ms — mais threads disputam entre si em vez de somar.",
+            Field("threads", "int", "RapidOCR threads", 4,
+                  "CPU cores used by the neural engine. Benchmark on this machine: default "
+                  "ONNXRuntime took 1646 ms per read, 4 threads took 375 ms, and 8 threads worsened "
+                  "to 1097 ms due to thread contention.",
                   minimum=1, maximum=32),
-            Field("capture_scale", "float", "Ampliação da captura", 2.0,
-                  "O recorte é renderizado pelo próprio Chrome nesta escala, sem interpolação. "
-                  "Medido: 2.0 lê igual a 3.0 e custa metade do tempo de captura; 1.0 já erra.",
+            Field("capture_scale", "float", "Capture upscale factor", 2.0,
+                  "The region is rendered directly by Chrome at this scale, without interpolation. "
+                  "Benchmarked: 2.0 reads identically to 3.0 and halves capture time; 1.0 makes errors.",
                   minimum=1.0, maximum=6.0),
-            Field("min_confidence", "float", "Confiança mínima (%)", 45.0,
-                  "Leituras abaixo disso são descartadas.", minimum=0.0, maximum=100.0),
-            Field("name_match_threshold", "float", "Semelhança mínima do nome", 0.75,
-                  "Quanto o nome lido precisa parecer com o configurado para valer como o mesmo perfil.",
+            Field("min_confidence", "float", "Minimum confidence (%)", 45.0,
+                  "Readings below this threshold are discarded.", minimum=0.0, maximum=100.0),
+            Field("name_match_threshold", "float", "Name match threshold", 0.75,
+                  "How closely a read name must match the configured name to count as the same profile.",
                   minimum=0.4, maximum=1.0),
-            Field("use_known_names", "bool", "Conferir com os nomes do banco", True,
-                  "Compara cada nome lido com o que o banco já conhece. Só corrige diferença de "
-                  "formatação (espaço, pontuação, maiúsculas) e o que estiver em "
-                  "player_name_mappings — nome parecido NUNCA é fundido com outro, porque uma "
-                  "junção indevida não deixa rastro para corrigir. Serve também para pular o "
-                  "motor lento quando os três campos já são conhecidos."),
-            Field("confidence_gate", "float", "Confiança mínima do Tesseract", 60.0,
-                  "Abaixo disso a leitura é conferida com o RapidOCR, que é mais lento. "
-                  "Medido: leituras corretas ficam entre 71 e 96; as que ele errou marcaram "
-                  "16 e 35. Aumente para conferir mais (mais lento e mais seguro).",
+            Field("use_known_names", "bool", "Match with database names", True,
+                  "Compares each read name with known database records. Only corrects formatting differences "
+                  "(spacing, punctuation, capitalization) and entries in player_name_mappings — similar names "
+                  "are NEVER merged, as an erroneous merge leaves no trace to undo. Also skips the slower "
+                  "engine when all three fields are already recognized."),
+            Field("confidence_gate", "float", "Tesseract confidence gate", 60.0,
+                  "Below this score, readings are cross-checked with RapidOCR. "
+                  "Benchmarked: correct readings score 71 to 96; erroneous readings score 16 and 35. "
+                  "Increase to cross-check more often (slower, safer).",
                   minimum=0.0, maximum=100.0),
-            Field("tesseract_lang", "str", "Idioma do Tesseract", "por",
-                  "Um idioma só. Medido: 'por+eng' custa 446 ms e 'por' sozinho 310 ms, "
-                  "com o mesmo resultado — o português já cobre o alfabeto latino."),
-            Field("tesseract_path", "path", "Caminho do tesseract.exe", "",
-                  "Vazio = procurar no PATH e nos caminhos padrão do Windows."),
+            Field("tesseract_lang", "str", "Tesseract language", "por",
+                  "Single language model. Benchmarked: 'por+eng' costs 446 ms and 'por' alone costs 310 ms "
+                  "with identical results — Portuguese covers the Latin alphabet."),
+            Field("tesseract_path", "path", "tesseract.exe path", "",
+                  "Empty = search in PATH and standard Windows paths."),
         ],
     ),
     Section(
         "vision",
-        "Reconhecimento de imagem",
-        "Busca dos botões pela imagem de referência gravada na calibração.",
+        "Image Recognition",
+        "Button search using reference images saved during calibration.",
         [
-            Field("match_threshold", "float", "Limiar de semelhança", 0.80,
-                  "Correlação mínima para considerar que a imagem foi encontrada.",
+            Field("match_threshold", "float", "Similarity threshold", 0.80,
+                  "Minimum correlation score to consider the image found.",
                   minimum=0.3, maximum=1.0),
-            Field("scaled_threshold_relief", "float", "Alívio para escalas diferentes", 0.06,
-                  "Desconto no limiar quando a imagem precisa ser redimensionada, já que "
-                  "redimensionar sempre reduz um pouco a correlação.",
+            Field("scaled_threshold_relief", "float", "Scaled threshold relief", 0.06,
+                  "Threshold discount applied when the image is resized, since "
+                  "rescaling always slightly lowers correlation.",
                   minimum=0.0, maximum=0.3),
-            Field("max_attempts", "int", "Tentativas de busca", 3, "", minimum=1, maximum=20),
-            Field("retry_interval", "float", "Intervalo entre tentativas (s)", 0.4, "",
+            Field("max_attempts", "int", "Search attempts", 3, "", minimum=1, maximum=20),
+            Field("retry_interval", "float", "Retry interval (s)", 0.4, "",
                   minimum=0.0, maximum=10.0),
         ],
     ),

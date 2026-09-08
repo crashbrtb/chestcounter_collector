@@ -82,7 +82,7 @@ class RunContext:
         if self.config.get("execution", "close_browser_on_finish", True):
             self.browser.close()
         else:
-            logger.info("Leaving the browser open (see Execução > Fechar o navegador ao terminar).")
+            logger.info("Leaving the browser open (see Execution > Close browser on finish).")
             self.browser.disconnect()
 
 

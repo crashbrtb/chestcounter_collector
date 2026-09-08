@@ -66,7 +66,7 @@ class CalibrationWizard(ctk.CTkToplevel):
         # the main thread picks it up on its own schedule.
         self.results: queue.Queue = queue.Queue()
 
-        self.title("Calibração dos controles do jogo")
+        self.title("Game Controls Calibration")
         self.geometry("1280x780")
         self.minsize(1050, 640)
         self.protocol("WM_DELETE_WINDOW", self._close)
@@ -85,9 +85,9 @@ class CalibrationWizard(ctk.CTkToplevel):
         left.pack(side="left", fill="y", padx=(0, 10))
         left.pack_propagate(False)
 
-        ctk.CTkLabel(left, text="Passos", font=ctk.CTkFont(size=14, weight="bold"),
+        ctk.CTkLabel(left, text="Steps", font=ctk.CTkFont(size=14, weight="bold"),
                      text_color=ACCENT).pack(anchor="w", padx=12, pady=(12, 2))
-        ctk.CTkLabel(left, text="Clique em um passo para refazer só ele.",
+        ctk.CTkLabel(left, text="Click a step to redo only that one.",
                      font=ctk.CTkFont(size=11), text_color=MUTED,
                      wraplength=280, justify="left").pack(anchor="w", padx=12, pady=(0, 8))
 
@@ -139,21 +139,21 @@ class CalibrationWizard(ctk.CTkToplevel):
         footer = ctk.CTkFrame(self, fg_color="transparent")
         footer.pack(side="bottom", fill="x", padx=16, pady=12)
 
-        ctk.CTkButton(footer, text="Fechar", width=100, height=36, fg_color="#21262d",
+        ctk.CTkButton(footer, text="Close", width=100, height=36, fg_color="#21262d",
                       command=self._close).pack(side="left")
-        self.chk_chain = ctk.CTkCheckBox(footer, text="Avançar sozinho para o próximo passo",
+        self.chk_chain = ctk.CTkCheckBox(footer, text="Automatically advance to next step",
                                          font=ctk.CTkFont(size=12), command=self._toggle_chain)
         self.chk_chain.select()
         self.chk_chain.pack(side="left", padx=16)
 
-        ctk.CTkButton(footer, text="🔎 Testar este passo", width=180, height=36,
+        ctk.CTkButton(footer, text="🔎 Test this step", width=180, height=36,
                       fg_color="#1f6feb", hover_color="#388bfd",
                       command=self.test_step).pack(side="right", padx=4)
-        ctk.CTkButton(footer, text="📷 Atualizar captura", width=180, height=36,
+        ctk.CTkButton(footer, text="📷 Refresh capture", width=180, height=36,
                       command=self.refresh_capture).pack(side="right", padx=4)
-        ctk.CTkButton(footer, text="Pular", width=90, height=36, fg_color="#21262d",
+        ctk.CTkButton(footer, text="Skip", width=90, height=36, fg_color="#21262d",
                       command=self.skip).pack(side="right", padx=4)
-        ctk.CTkButton(footer, text="Refazer este passo", width=160, height=36, fg_color="#21262d",
+        ctk.CTkButton(footer, text="Redo this step", width=160, height=36, fg_color="#21262d",
                       command=self.redo).pack(side="right", padx=4)
 
         self._show_step()
@@ -164,15 +164,15 @@ class CalibrationWizard(ctk.CTkToplevel):
     # -------------------------------------------------------------- capture
     def refresh_capture(self):
         """Takes a fresh picture of the game page and shows it."""
-        self._set_state("Capturando a tela do jogo...", MUTED)
+        self._set_state("Capturing game screen...", MUTED)
         self.update_idletasks()
         try:
             image = self.ctx.browser.capture(scale=1.0)
         except Exception as exc:  # noqa: BLE001
-            self._set_state(f"✖ Não foi possível capturar: {exc}", ERROR_COLOR)
+            self._set_state(f"✖ Could not capture: {exc}", ERROR_COLOR)
             return
         if image is None or image.size == 0:
-            self._set_state("✖ A captura veio vazia. O jogo está aberto na aba conectada?", ERROR_COLOR)
+            self._set_state("✖ Capture is empty. Is the game open on the connected tab?", ERROR_COLOR)
             return
 
         self.screenshot = image
@@ -185,14 +185,14 @@ class CalibrationWizard(ctk.CTkToplevel):
         if fora:
             nomes = ", ".join(STEPS_BY_NAME[n].title for n in fora if n in STEPS_BY_NAME)
             self._set_state(
-                f"⚠ estes passos estão FORA da página de {image.shape[1]}x{image.shape[0]} e "
-                f"nunca vão funcionar: {nomes}. Foram gravados com a janela em outro tamanho — "
-                f"clique em cada um na lista e refaça.", ERROR_COLOR)
+                f"⚠ These steps are OUTSIDE the {image.shape[1]}x{image.shape[0]} page and "
+                f"will never work: {nomes}. They were recorded with the window at a different size — "
+                f"click each in the list and redo.", ERROR_COLOR)
             return
 
         self._set_state(
-            f"Captura de {image.shape[1]}x{image.shape[0]} px. "
-            f"Navegue no jogo e capture de novo quando a tela do passo estiver aberta.",
+            f"Capture size: {image.shape[1]}x{image.shape[0]} px. "
+            f"Navigate in the game and refresh capture when the step screen is visible.",
             MUTED,
         )
 
@@ -283,19 +283,19 @@ class CalibrationWizard(ctk.CTkToplevel):
 
     def _show_step(self):
         step = self._current()
-        kind = {"click": "um ponto", "area": "uma área", "region": "uma área com imagem de referência"}
+        kind = {"click": "a point", "area": "an area", "region": "an area with reference image"}
         self.lbl_progress.configure(
-            text=f"Passo {self.index + 1} de {len(STEPS)}  ·  {kind.get(step.type, step.type)}"
-            + ("  ·  opcional" if step.optional else "")
+            text=f"Step {self.index + 1} of {len(STEPS)}  ·  {kind.get(step.type, step.type)}"
+            + ("  ·  optional" if step.optional else "")
         )
         self.lbl_title.configure(text=step.title)
         self.lbl_instruction.configure(text=step.instruction)
 
         done = self.calibration.is_calibrated(step.name)
-        target = "o primeiro canto" if step.is_rectangle else "o ponto"
+        target = "the first corner" if step.is_rectangle else "the point"
         self._set_state(
-            ("Já calibrado — clique de novo para substituir. " if done else "")
-            + f"Clique na captura, em {target}.",
+            ("Already calibrated — click again to replace. " if done else "")
+            + f"Click on the capture, at {target}.",
             MUTED,
         )
         self._update_list()
@@ -314,40 +314,34 @@ class CalibrationWizard(ctk.CTkToplevel):
 
     def _on_click(self, event):
         if self.screenshot is None:
-            self._set_state("Capture a tela primeiro (botão 'Atualizar captura').", WARN_COLOR)
+            self._set_state("Capture the screen first ('Refresh capture' button).", WARN_COLOR)
             return
 
-        # A escala só existe depois que a janela foi desenhada. Um clique antes
-        # disso viraria uma coordenada sem sentido gravada em silêncio - e uma
-        # calibração errada só aparece de madrugada, na execução agendada.
+        # Scaling only exists after the window has been drawn.
         if self.display_scale < 0.05:
-            self._set_state("A janela ainda está sendo desenhada. Clique de novo.", WARN_COLOR)
+            self._set_state("The window is still rendering. Click again.", WARN_COLOR)
             self._draw()
             return
 
         step = self._current()
         page_x, page_y = self._to_page(event.x, event.y)
 
-        # The capture rarely has the canvas's exact proportions, so there is
-        # empty canvas beside or below it. A click there is off the page, and
-        # recording it produced coordinates outside the game - a click that
-        # reaches nothing and looks like a button that ignored it.
         height, width = self.screenshot.shape[:2]
         if not (0 <= page_x < width and 0 <= page_y < height):
             self._set_state(
-                f"✖ clique fora da captura ({page_x}, {page_y}); a página tem {width}x{height}. "
-                f"Clique dentro da imagem do jogo.", ERROR_COLOR)
+                f"✖ Click outside capture ({page_x}, {page_y}); page size is {width}x{height}. "
+                f"Click inside the game image.", ERROR_COLOR)
             return
 
         if not step.is_rectangle:
             self.calibration.set_point(step.name, page_x, page_y)
             self.calibration.save()
-            self._recorded(f"✔ ponto gravado em {page_x}, {page_y}")
+            self._recorded(f"✔ Point saved at {page_x}, {page_y}")
             return
 
         self.corners.append((page_x, page_y))
         if len(self.corners) == 1:
-            self._set_state(f"✔ primeiro canto em {page_x}, {page_y} — agora o canto oposto.", OK_COLOR)
+            self._set_state(f"✔ First corner at {page_x}, {page_y} — now click the opposite corner.", OK_COLOR)
             self._draw()
             return
 
@@ -365,13 +359,11 @@ class CalibrationWizard(ctk.CTkToplevel):
         region = self.calibration.regions[step.name]
         self.corners.clear()
         if warning:
-            # Recorded, but not advanced: a reference like this is worse than
-            # none, and chaining on would bury the warning under the next step.
             self._set_state(warning, WARN_COLOR)
             self._update_list()
             self._draw()
             return
-        self._recorded(f"✔ área de {region['width']}x{region['height']} px gravada")
+        self._recorded(f"✔ Area of {region['width']}x{region['height']} px saved")
 
     def _recorded(self, message: str):
         self._set_state(message, OK_COLOR)
@@ -386,19 +378,13 @@ class CalibrationWizard(ctk.CTkToplevel):
     def test_step(self):
         """
         Exercises the calibrated step against the running game and shows the result.
-
-        Calibrating and running were two separate worlds: a point could be a few
-        pixels off, or covered by the store, and the only sign was a collection
-        that quietly did nothing at three in the morning. Here the click is sent
-        for real and the screen recaptured, so 'did the profile menu open?' is
-        answered by looking at it.
         """
         step = self._current()
         if not self.calibration.is_calibrated(step.name):
-            self._set_state("Este passo ainda não foi calibrado.", WARN_COLOR)
+            self._set_state("This step has not been calibrated yet.", WARN_COLOR)
             return
 
-        self._set_state("Testando...", MUTED)
+        self._set_state("Testing...", MUTED)
         self.update_idletasks()
         threading.Thread(target=self._run_test, args=(step,), daemon=True).start()
 
@@ -417,8 +403,6 @@ class CalibrationWizard(ctk.CTkToplevel):
     def _run_test(self, step):
         recapture = False
         try:
-            # The run rescales calibrated coordinates to the current page size;
-            # the test has to go through the same path or it would prove nothing.
             self.ctx.sync_viewport()
 
             if step.type == "click":
@@ -427,20 +411,17 @@ class CalibrationWizard(ctk.CTkToplevel):
                 self.ctx.browser.click(point[0], point[1], delay=1.2)
                 after = self.ctx.browser.capture(scale=1.0)
 
-                # Whether the click did anything is measured, not eyeballed: a
-                # click that misses and one that lands on a dead spot look the
-                # same from outside, and both were reported as 'nothing happens'.
                 moved = changed_fraction(before, after)
                 recapture = True
                 if moved >= 0.01:
-                    message = (f"✔ cliquei em ({point[0]}, {point[1]}) e a tela MUDOU "
-                               f"({moved:.0%} dela). A captura abaixo é de depois do clique — "
-                               f"abriu o que devia?")
+                    message = (f"✔ Clicked at ({point[0]}, {point[1]}) and screen CHANGED "
+                               f"({moved:.0%} changed). Below is the capture after click — "
+                               f"did the intended element open?")
                     colour = OK_COLOR
                 else:
-                    message = (f"✖ cliquei em ({point[0]}, {point[1]}) e a tela NÃO mudou "
-                               f"({moved:.1%}). O clique caiu no vazio: ou o ponto está errado, "
-                               f"ou algo está por cima dele (a loja, um modal).")
+                    message = (f"✖ Clicked at ({point[0]}, {point[1]}) and screen DID NOT change "
+                               f"({moved:.1%}). The click hit nothing: either the point is wrong, "
+                               f"or something is covering it (store, modal dialog).")
                     colour = ERROR_COLOR
                 self.results.put((message, colour, recapture))
                 return
@@ -449,25 +430,25 @@ class CalibrationWizard(ctk.CTkToplevel):
                 region = self.calibration.region(step.name)
                 rows = self.ctx.ocr.read_rows(region)
                 if rows:
-                    message = f"✔ li nesta área: {' | '.join(rows[:6])}"
+                    message = f"✔ Read in this area: {' | '.join(rows[:6])}"
                     colour = OK_COLOR
                 else:
-                    message = ("✖ nenhum texto lido nesta área. A tela certa está aberta? "
-                               "A área pega o texto todo?")
+                    message = ("✖ No text read in this area. Is the correct screen open? "
+                               "Does the area cover the full text?")
                     colour = ERROR_COLOR
-            else:   # region: procura a imagem de referência na tela inteira
+            else:   # region: search reference image across whole page
                 match = self.ctx.vision.find(self.calibration.ref_path(step.name), None,
                                              base_scale=self.calibration.image_scale, attempts=1)
                 if match:
-                    message = (f"✔ imagem encontrada em ({match[0]}, {match[1]}) "
-                               f"com semelhança {self.ctx.vision.last_score:.2f}")
+                    message = (f"✔ Image found at ({match[0]}, {match[1]}) "
+                               f"with similarity {self.ctx.vision.last_score:.2f}")
                     colour = OK_COLOR
                 else:
-                    message = (f"✖ imagem não encontrada agora (melhor semelhança "
-                               f"{self.ctx.vision.last_score:.2f}). Ela está visível na tela?")
+                    message = (f"✖ Image not found currently (best similarity "
+                               f"{self.ctx.vision.last_score:.2f}). Is it visible on screen?")
                     colour = ERROR_COLOR
         except Exception as exc:  # noqa: BLE001
-            message, colour = f"✖ falha no teste: {exc}", ERROR_COLOR
+            message, colour = f"✖ Test failed: {exc}", ERROR_COLOR
 
         self.results.put((message, colour, recapture))
 
@@ -476,15 +457,15 @@ class CalibrationWizard(ctk.CTkToplevel):
         self.calibration.forget(step.name)
         self.corners.clear()
         self._show_step()
-        self._set_state("Passo apagado. Clique na captura para gravar de novo.", WARN_COLOR)
+        self._set_state("Step cleared. Click on the capture to calibrate again.", WARN_COLOR)
 
     def skip(self):
         if self.index < len(STEPS) - 1:
             self.go_to(self.index + 1)
 
     def _finished(self):
-        self.lbl_title.configure(text="Calibração completa", text_color=OK_COLOR)
-        self._set_state("Todos os passos obrigatórios foram gravados em config/calibration.json.", OK_COLOR)
+        self.lbl_title.configure(text="Calibration complete", text_color=OK_COLOR)
+        self._set_state("All required steps have been saved to config/calibration.json.", OK_COLOR)
 
     def _set_state(self, message: str, color: str):
         self.lbl_state.configure(text=message, text_color=color)

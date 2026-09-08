@@ -38,7 +38,7 @@ class CancelToken:
         self._event = threading.Event()
         self.reason = ""
 
-    def cancel(self, reason: str = "cancelado pelo usuário"):
+    def cancel(self, reason: str = "cancelled by user"):
         self.reason = reason
         self._event.set()
 
@@ -53,12 +53,12 @@ class CancelToken:
     def check(self):
         """Raises if a cancellation is pending. Call between steps, not inside them."""
         if self._event.is_set():
-            raise Cancelled(self.reason or "cancelado pelo usuário")
+            raise Cancelled(self.reason or "cancelled by user")
 
     def sleep(self, seconds: float):
         """A wait that ends early when cancelled - and then raises."""
         if seconds > 0 and self._event.wait(seconds):
-            raise Cancelled(self.reason or "cancelado pelo usuário")
+            raise Cancelled(self.reason or "cancelled by user")
         self.check()
 
 

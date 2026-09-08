@@ -41,10 +41,10 @@ class ChatAutomator(BaseModule):
         missing = self.calibration.require(*REQUIRED_STEPS)
         if missing:
             logger.warning(
-                f"O módulo Chat ainda não tem passos de calibração ({', '.join(missing)}). "
-                f"Nada foi enviado."
+                f"The Chat module has no calibration steps configured yet ({', '.join(missing)}). "
+                f"Nothing was sent."
             )
-            return {"module": self.name, "success": False, "reason": "sem calibração"}
+            return {"module": self.name, "success": False, "reason": "no calibration"}
         if not message:
-            return {"module": self.name, "success": False, "reason": "mensagem vazia"}
+            return {"module": self.name, "success": False, "reason": "empty message"}
         return {"module": self.name, "success": self.send_message(message), "message": message}

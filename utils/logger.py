@@ -38,7 +38,7 @@ def _file_handler(log_dir: str, level: int) -> Optional[logging.Handler]:
         path = os.path.join(log_dir, f"collector_{datetime.now():%Y-%m-%d}.log")
         handler = logging.FileHandler(path, encoding="utf-8")
     except OSError as exc:
-        print(f"[WARN] Não foi possível abrir o arquivo de log em {log_dir}: {exc}")
+        print(f"[WARN] Could not open log file in {log_dir}: {exc}")
         return None
     handler.setLevel(level)
     handler.setFormatter(logging.Formatter(LOG_FORMAT, DATE_FORMAT))
@@ -48,8 +48,8 @@ def _file_handler(log_dir: str, level: int) -> Optional[logging.Handler]:
 def purge_old_logs(log_dir: str, retention_days: int):
     """Deletes *.log files older than the retention window (0 = keep forever).
 
-    Pega tanto os collector_AAAA-MM-DD.log quanto o startup.log, que o run.bat
-    alimenta com o stderr das falhas anteriores ao logger e que so cresceria.
+    Purges both collector_YYYY-MM-DD.log and startup.log, which run.bat feeds
+    with early stderr failures before the logger initializes.
     """
     if retention_days <= 0 or not os.path.isdir(log_dir):
         return

@@ -52,14 +52,14 @@ class CollectorRunner:
 
         accounts = self.ctx.config.enabled_accounts()
         if not accounts:
-            problems.append("Nenhuma conta habilitada com perfis. Cadastre em Contas e perfis.")
+            problems.append("No enabled accounts with profiles found. Configure in Accounts and profiles.")
 
         for account in accounts:
             if self.ctx.login.enabled and not (account.login and account.password):
-                problems.append(f"A conta '{account.name}' está sem usuário ou senha.")
+                problems.append(f"Account '{account.name}' has no username or password.")
             if not account.collectable_profiles:
                 problems.append(
-                    f"A conta '{account.name}' não tem nenhum perfil com banco de dados configurado."
+                    f"Account '{account.name}' has no profiles with a configured database."
                 )
 
         # Sessions are no longer wiped between accounts (that costs an e-mail
@@ -70,15 +70,15 @@ class CollectorRunner:
             folders = [self.ctx.config.browser_profile_for(a) for a in accounts]
             if len(set(folders)) < len(accounts):
                 problems.append(
-                    "Mais de uma conta compartilhando o mesmo perfil de navegador. Como a sessão "
-                    "não é mais apagada entre contas, a segunda usaria a sessão da primeira. "
-                    "Dê a cada conta um 'Perfil do navegador' próprio em Contas e perfis."
+                    "Multiple accounts share the same browser profile. Since sessions are "
+                    "no longer cleared between accounts, the second account would use the first's session. "
+                    "Assign each account its own 'Browser profile' in Accounts and profiles."
                 )
 
         missing = [name for name in REQUIRED_STEPS if not self.ctx.calibration.is_calibrated(name)]
         if missing:
             titles = ", ".join(STEPS_BY_NAME[name].title for name in missing)
-            problems.append(f"Calibração incompleta. Faltam os passos: {titles}.")
+            problems.append(f"Incomplete calibration. Missing steps: {titles}.")
 
         # Works with or without the browser open: with it, against the live page
         # size; without it, against the size the calibration was recorded at.
@@ -86,13 +86,13 @@ class CollectorRunner:
         if outside:
             titles = ", ".join(STEPS_BY_NAME[n].title for n in outside if n in STEPS_BY_NAME)
             problems.append(
-                f"Estes passos da calibração caem FORA da página e o clique não atinge nada: "
-                f"{titles}. Refaça-os no assistente, com a janela no tamanho de uso."
+                f"These calibration steps fall OUTSIDE the page and clicks will hit nothing: "
+                f"{titles}. Redo them in the wizard, with the window at your normal running size."
             )
 
         ocr_ok, ocr_reason = self.ctx.ocr.status()
         if not ocr_ok:
-            problems.append(f"OCR indisponível: {ocr_reason}.")
+            problems.append(f"OCR unavailable: {ocr_reason}.")
         else:
             logger.info(f"OCR engine: {ocr_reason}")
 
@@ -105,13 +105,13 @@ class CollectorRunner:
         if problems:
             for problem in problems:
                 logger.error(problem)
-            raise RunnerError("A execução não pode começar: " + " | ".join(problems))
+            raise RunnerError("Execution cannot start: " + " | ".join(problems))
 
         accounts = self.ctx.config.enabled_accounts()
         if only_account:
             accounts = [a for a in accounts if only_account.lower() in a.name.lower()]
             if not accounts:
-                raise RunnerError(f"Conta '{only_account}' não encontrada entre as habilitadas.")
+                raise RunnerError(f"Account '{only_account}' not found among enabled accounts.")
 
         self.ctx.start_browser()
 
@@ -130,7 +130,7 @@ class CollectorRunner:
                     raise
             except Exception as exc:  # noqa: BLE001 - one account must not sink the run
                 logger.exception(f"Unexpected failure on account '{account.name}': {exc}")
-                self._record_failure(account, None, f"erro inesperado: {exc}")
+                self._record_failure(account, None, f"unexpected error: {exc}")
                 self._save_error_screenshot(f"account_{account.name}")
                 if self.execution.get("stop_on_error"):
                     raise
@@ -143,14 +143,14 @@ class CollectorRunner:
         wanted_profile = self.ctx.config.browser_profile_for(account)
         if not self.ctx.browser.switch_profile(wanted_profile):
             raise SessionError(
-                f"A conta '{account.name}' usa o perfil de navegador '{wanted_profile}', "
-                f"que não pôde ser aberto."
+                f"Account '{account.name}' uses browser profile '{wanted_profile}', "
+                f"which could not be opened."
             )
         self.ctx.sync_viewport()
 
         if self.ctx.login.enabled:
             if not self.ctx.login.enter_account(account):
-                raise SessionError(f"Não foi possível entrar na conta '{account.name}'.")
+                raise SessionError(f"Could not log into account '{account.name}'.")
         else:
             self.ctx.browser.navigate()
 
@@ -171,7 +171,7 @@ class CollectorRunner:
                     f"Profile '{profile.label}' has no database configured and was skipped "
                     f"(a profile without a database has nowhere to record its chests)."
                 )
-                self._record_failure(account, profile, "perfil sem banco de dados")
+                self._record_failure(account, profile, "profile has no database")
                 continue
             cancellation.check()
             self._run_profile(account, profile, siblings)
@@ -186,14 +186,14 @@ class CollectorRunner:
             logger.info(f"--- Profile '{profile.label}' (attempt {attempt}/{attempts}) ---")
             try:
                 if not self.ctx.profiles.switch_to(profile, siblings):
-                    raise SessionError(f"não foi possível ativar o perfil '{profile.name}'")
+                    raise SessionError(f"could not activate profile '{profile.name}'")
 
                 result = self.collector.collect_for_profile(profile)
                 result.setdefault("account", account.name)
                 self.results.append(result)
                 if result.get("success"):
                     return
-                logger.warning(f"Collection for '{profile.label}' reported: {result.get('reason', 'falha')}")
+                logger.warning(f"Collection for '{profile.label}' reported: {result.get('reason', 'failure')}")
             except Cancelled:
                 raise
             except SessionError as exc:
@@ -206,7 +206,7 @@ class CollectorRunner:
                 logger.info("Retrying the profile after resetting the board...")
                 self.ctx.game_state.prepare_board()
 
-        self._record_failure(account, profile, "todas as tentativas falharam")
+        self._record_failure(account, profile, "all attempts failed")
 
     # ---------------------------------------------------------------- results
     def _record_failure(self, account: AccountConfig, profile: Optional[ProfileConfig], reason: str):

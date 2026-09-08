@@ -1,389 +1,355 @@
 # Total Battle Chest Collector
 
-Coleta automaticamente os baús do clã no Total Battle e grava cada um no banco
-MySQL/MariaDB. A interface web de consulta continua sendo a
+Automatically collects clan chests in Total Battle and records each one into a
+MySQL/MariaDB database. The web reporting and query interface remains
 [chestcounter](https://github.com/crashbrtb/chestcounter).
 
-A versão 2.0 mudou as bases da aplicação: o jogo agora roda no **Chrome
-controlado por CDP** em vez do aplicativo desktop, cada **conta tem login e
-senha próprios** com seus perfis, e não existe mais coordenada escrita à mão —
-tudo é calibrado clicando na tela e configurado por uma interface.
+Version 2.0 rebuilt the foundation of the application: the game now runs in
+**Chrome controlled via CDP** instead of the desktop client, each **account has
+its own login and password** along with its profiles, and there are no longer
+hand-written coordinates — everything is calibrated by clicking directly on the
+screen and configured through a graphical interface.
 
 ---
 
-## Instalação
+## Installation
 
-1. Baixe os arquivos para uma pasta (por exemplo `C:\chestcounter`).
-2. Rode `install.bat` — cria o ambiente virtual e instala tudo.
-3. Duplo clique em `Configurar.bat` e siga os quatro passos da aba **Execução**.
+1. Download the files to a folder (for example `C:\chestcounter`).
+2. Run `install.bat` — creates the virtual environment and installs all dependencies.
+3. Double-click `Configure.bat` (or `Configurar.bat`) and follow the steps in the **Execution** tab.
 
-O `install.bat` aproveita as credenciais de banco de um `position.cfg` da versão
-antiga, se houver: os perfis já aparecem cadastrados, faltando só o login da
-conta.
+If an older version's `position.cfg` exists, `install.bat` automatically imports
+database credentials from it: profiles will already appear registered, requiring
+only the account login credentials.
 
-### Tesseract (recomendado)
+### Tesseract (recommended)
 
-O RapidOCR vem pelo `pip`, mas o Tesseract é um programa à parte — e ele é o
-motor **principal**, o mais rápido dos dois. Sem ele a coleta ainda funciona (cai
-no RapidOCR), porém mais lenta e sem acentos.
-Instale o [Tesseract para Windows](https://github.com/UB-Mannheim/tesseract/wiki)
-com o idioma **Português** marcado.
+While RapidOCR is installed via `pip`, Tesseract is a standalone program — and
+it is the **primary** and fastest of the two OCR engines. Collection still
+works without it (falling back to RapidOCR), though it will be slower and won't
+preserve certain accents.
+Install [Tesseract for Windows](https://github.com/UB-Mannheim/tesseract/wiki)
+with language packages selected (e.g., Portuguese/English as needed).
 
 ---
 
-## Uso
+## Usage
 
-Duplo clique, sem prompt de comando:
+Double-click to run without needing a command prompt:
 
-| Arquivo | O que faz |
+| File | Description |
 |---|---|
-| **`Configurar.bat`** | Abre a interface: contas, perfis, bancos e todos os parâmetros |
-| **`Calibrar.bat`** | Abre direto o assistente de calibração |
-| `run.bat` | Coleta os baús. **É o que o Agendador de Tarefas deve chamar.** |
+| **`Configure.bat`** (or `Configurar.bat`) | Opens the interface: accounts, profiles, databases, and all parameters |
+| **`Calibrate.bat`** (or `Calibrar.bat`) | Opens the calibration wizard directly |
+| `run.bat` | Collects chests. **This is what Windows Task Scheduler should call.** |
 
-Os dois primeiros são atalhos para o `run.bat`, que também aceita
-`run.bat config`, `run.bat calibrar` e `run.bat verificar` (confere configuração
-e calibração sem coletar) para quem preferir a linha de comando.
+The first two are shortcuts for `run.bat`, which also accepts `run.bat config`,
+`run.bat calibrate`, and `run.bat check` (verifies configuration and calibration
+without collecting) for command-line users.
 
-Código de saída (visível em *Último resultado da execução* no agendador):
-`0` tudo coletado · `1` alguma falha · `2` configuração ou calibração incompleta ·
-`3` cancelado.
+Exit codes (visible in *Last Run Result* in Windows Task Scheduler):
+`0` all collected · `1` failures occurred · `2` incomplete configuration/calibration ·
+`3` cancelled.
 
-**Para cancelar uma execução, segure ESC** por um instante — de qualquer janela, mesmo com o
-jogo em foco. A interface também tem um botão *Parar*. O cancelamento interrompe até as
-esperas longas, e o que já foi coletado permanece gravado. O ESC que o próprio coletor envia
-ao jogo passa por CDP e não toca no teclado físico, então não cancela nada.
+**To cancel an ongoing run, hold ESC** for a moment — from any window, even with
+the game in focus. The interface also includes a *Stop* button. Cancellation
+interrupts even long wait delays, and whatever was already collected remains
+safely saved in the database. (The ESC key sent by the collector to close dialogs
+passes through CDP and does not touch physical keyboard events, so it never
+triggers cancellation).
 
-### Agendamento
+### Scheduling
 
-Aponte o Agendador de Tarefas do Windows para o `run.bat`. Não há mais nada para
-configurar no `.bat`: **toda** a execução (módulo, tentativas, tempos, nível e
-retenção de log) está em `config/config.json`, editável pela interface.
+Point Windows Task Scheduler to `run.bat`. There is nothing to configure inside
+the `.bat` file itself: **all** execution settings (module, retry attempts,
+timings, log level, and retention) are stored in `config/config.json`, editable
+through the interface.
 
-O log é escrito pelo próprio Python em
-`execution_logs/collector_AAAA-MM-DD.log`, em UTF-8, com limpeza automática dos
-antigos. Redirecionar a saída do `.bat` — como era antes — perdia acentos e
-cortava o log quando o processo morria.
-
----
-
-## Contas e perfis
-
-```
-Conta  (e-mail + senha do totalbattle.com)
-  └── Perfil (cidade)  → banco de dados próprio
-  └── Perfil (cidade)  → banco de dados próprio
-```
-
-A coleta respeita essa ordem: entra na conta e percorre os perfis dela antes de
-passar para a próxima.
-
-**A sessão do navegador é preservada, nunca apagada.** Limpar cookies faz o jogo
-tratar o navegador como um aparelho novo e mandar um código de verificação por
-e-mail — que uma execução agendada de madrugada não tem como responder. Por isso
-cada execução apenas pergunta à página onde ela está: já autenticada, ou na tela
-de login. Fazer login virou exceção, não rotina.
-
-Com **mais de uma conta**, cada uma precisa do seu próprio *Perfil do navegador*
-(uma pasta de dados só dela, preenchida em Contas e perfis): assim cada conta
-mantém a própria sessão já verificada, e o navegador é reiniciado nessa pasta ao
-trocar de conta. Se duas contas dividirem o mesmo perfil, a execução **para antes
-de começar** e explica o motivo — a segunda conta rodaria dentro da sessão da
-primeira e gravaria no banco errado.
-
-**Um perfil sem banco de dados é ignorado**, com aviso no log: não haveria onde
-registrar o que fosse coletado.
-
-### Como o login é feito
-
-O formulário do totalbattle.com **já está no HTML quando a página abre, porém
-fechado** — só aparece depois de clicar em *Login*. Por isso o coletor primeiro
-procura o botão que abre o formulário, clica, espera os campos ficarem visíveis
-e só então digita, com eventos reais de teclado e mouse.
-
-O que essa página em particular exigiu:
-
-- Estar sem campo de senha visível **não** significa estar logado — a página
-  deslogada também não mostra nenhum. O que indica sessão aberta é não haver
-  *nem* campo de senha visível *nem* botão de login na tela.
-- O botão que abre o login **é uma `div`**, não um `<button>` — a busca cobre
-  qualquer elemento clicável e fica com o mais interno, senão um container
-  inteiro passaria por botão.
-- A página mostra o **cadastro e o login ao mesmo tempo**, e são 8 campos de
-  e-mail no total: o primeiro é o do cadastro. Os campos são procurados apenas
-  dentro da caixa que contém o campo de senha, senão o e-mail iria para o
-  cadastro e a senha para o login.
-- São descartados os botões de login social (Google, Facebook, VK…) e os
-  caminhos alternativos que também falam em login — *"Log in with a code"*,
-  *"Forgot password"* —, e entre os candidatos vence o rótulo mais curto:
-  *"Log in"* é o botão e *"Log in to claim your reward"* é uma frase que apenas
-  o contém.
-
-Se a detecção errar, os cinco seletores CSS da seção **Login** permitem fixar na
-mão o botão que abre o formulário, os campos, o botão de enviar e um elemento
-que confirme o login.
+Logs are written directly by Python to
+`execution_logs/collector_YYYY-MM-DD.log` in UTF-8, with automatic cleanup of
+older files. Redirecting batch script output — as was done previously — caused
+character encoding issues and truncated logs if the process exited unexpectedly.
 
 ---
 
-## Calibração
+## Accounts and Profiles
 
-O assistente (`Calibrar.bat`) tira uma foto da página pelo CDP e você marca
-os controles **clicando na foto**, com uma lupa acompanhando o cursor. Assim a
-posição gravada já é a coordenada da página: nada depende de onde a janela está,
-nem da escala do Windows.
+```
+Account  (totalbattle.com email + password)
+  └── Profile (city)  → dedicated database
+  └── Profile (city)  → dedicated database
+```
 
-A captura é corrigida pela **escala do Windows**: o Chrome renderiza o
-screenshot no `devicePixelRatio` (a 125%, uma página de 1536 vira imagem de
-1920), mas o clique usa pixel CSS. A captura é pedida já compensada, então o
-pixel que você clica na imagem **é** o pixel que o clique atinge — sem isso todo
-ponto sai 1,25x grande e nenhum clique acerta.
+Collection strictly follows this hierarchy: it logs into the account and visits
+its profiles before proceeding to the next account.
 
-- **ponto** — um clique (botão do clã, aba de presentes…)
-- **área** — um retângulo (onde procurar texto ou um botão)
-- **área com referência** — o retângulo *e* um recorte da imagem, procurado
-  depois na tela; é como o botão "Abrir" é encontrado mesmo mudando de lugar
+**Browser sessions are preserved, never wiped.** Clearing cookies causes the
+game to treat the browser as a new device and send an email verification code
+— which an unattended nightly run cannot respond to. Therefore, each run simply
+inspects where the page currently is: already authenticated, or on the login
+screen. Logging in becomes the exception rather than routine.
 
-**Calibre com a janela no tamanho em que o coletor vai rodar.** Cada passo guarda
-o tamanho de página em que foi gravado; se a janela mudar de tamanho no meio da
-calibração, os passos anteriores continuam válidos, mas o assistente avisa se
-algum ficou fora da página — um clique fora da página não atinge nada e parece
-um botão que ignorou o clique.
+With **multiple accounts**, each account requires its own *Browser profile*
+(a dedicated user data directory configured in Accounts and Profiles). This
+allows each account to maintain its own verified session, and the browser is
+relaunched with that profile directory when switching accounts. If two accounts
+share the same profile directory, execution **halts before starting** with an
+explanation — otherwise, the second account would run within the first account's
+session and save chests into the wrong database.
 
-O botão **🔎 Testar este passo** exercita o passo no jogo de verdade e **mede** o
-resultado: no clique, compara a tela antes e depois e diz *"cliquei em (x,y) e a
-tela mudou 13%"* ou *"a tela NÃO mudou: o clique caiu no vazio"*; na área, mostra
-o que o OCR leu; na imagem de referência, se encontrou e com que semelhança.
+**A profile without a database configured is skipped**, with a warning in the
+log, as there would be nowhere to store collected records.
 
-A **lista de perfis com barra de rolagem** é tratada: o coletor rola até o topo,
-procura o nome, rola para baixo e procura de novo, repetindo até a lista parar de
-mudar — então uma conta com muitos perfis é percorrida inteira. Se o clique no
-menu de perfis não mudar a tela, o log diz isso explicitamente, em vez de culpar
-o OCR por não achar a lista.
+### How Login Works
 
-Cada passo pode ser refeito sozinho, sem repetir a sequência. Se a janela do
-navegador tiver outro tamanho no dia da execução, as coordenadas são reescaladas
-e as imagens procuradas em várias escalas — a precisão cai, mas a execução não
-quebra. Os dois últimos passos (loja) são opcionais.
+The totalbattle.com login form **is present in the HTML upon page load, but
+hidden** — it only becomes visible after clicking *Log In*. Therefore, the
+collector first searches for the button that opens the form, clicks it, waits
+for fields to become visible, and only then types using authentic keyboard and
+mouse events.
+
+Specific requirements discovered for this page:
+
+- Absence of a visible password field does **not** mean you are logged in — a
+  logged-out landing page also hides it initially. An active session is confirmed
+  only when there is *neither* a visible password field *nor* a login button on screen.
+- The button that opens login **is a `div`**, not a `<button>` — searches cover
+  any clickable element and select the innermost match so entire containers are
+  not mistaken for buttons.
+- The page displays **sign-up and login simultaneously**, containing up to 8 email
+  inputs in total (with sign-up being first). Fields are scoped strictly inside
+  the container that holds the password field; otherwise, email would enter the
+  registration form while the password entered login.
+- Third-party social login buttons (Google, Facebook, VK...) and alternative
+  prompts (*"Log in with a code"*, *"Forgot password"*) are filtered out. Among
+  valid candidates, the shortest label is selected: *"Log in"* is the button,
+  while *"Log in to claim your reward"* is merely a sentence containing those words.
+
+If automatic detection fails, the CSS selectors in the **Login** configuration
+section allow manually specifying the form opener button, input fields, submit
+button, and logged-in confirmation selector.
+
+---
+
+## Calibration
+
+The calibration wizard (`Calibrate.bat`) captures a screenshot of the page via
+CDP, allowing you to mark controls by **clicking on the picture** while a
+magnifier follows your cursor. The recorded coordinates are native page pixels:
+independent of window position and Windows display scaling.
+
+Captures compensate for **Windows display scaling**: Chrome renders screenshots
+at `devicePixelRatio` (at 125%, a 1536 px page yields a 1920 px image), but
+click events use CSS pixels. Captures are requested pre-compensated so the exact
+pixel clicked on the image **matches** the click target in the browser — without
+this, points would be scaled by 1.25x and miss their targets.
+
+- **point** — single click coordinate (clan button, gifts tab...)
+- **area** — rectangle region (where to search for text or buttons)
+- **region with reference** — rectangle *and* an image crop, later searched
+  on screen; this allows finding the "Open" button even when its position shifts.
+
+**Calibrate with the window sized as it will be during automated runs.** Each
+step records the viewport size it was calibrated on. If window dimensions change,
+coordinates are scaled accordingly, but the wizard will warn if any point falls
+out of bounds — clicks outside the page boundary hit nothing and behave like
+unresponsive buttons.
+
+The **🔎 Test this step** button exercises the step live in the running game and
+**measures** results: for clicks, it compares before and after screenshots and
+reports *"clicked (x, y) and screen changed 13%"* or *"screen DID NOT change: click
+hit empty space"*; for areas, it displays the recognized OCR text; for reference
+images, it reports whether the template was matched and with what similarity score.
+
+**Scrollable profile lists** are handled automatically: the collector scrolls to
+the top, searches for the name, scrolls down, and repeats until the list stops
+moving — ensuring accounts with many profiles are fully traversed. If clicking
+the profile menu does not change the screen, the log explicitly reports this
+rather than misattributing the issue to OCR.
+
+Each step can be recalibrated individually without redoing the entire sequence.
+The final two steps (store detection and close button) are optional.
 
 ---
 
 ## OCR
 
-A queixa que originou esta versão: nomes estrangeiros e acentuados vinham
-errados, e nome errado é baú creditado ao jogador errado.
+The primary motivation for version 2.0 was resolving misread foreign and
+accented names, which caused chests to be credited to the wrong players.
 
-Medindo os motores em texto renderizado como o do jogo (claro sobre fundo
-escuro, letra pequena):
+Benchmark comparison on game-rendered text (light text on dark textured background):
 
-| Motor | Letras certas | Acentos certos | Exemplo do erro |
+| Engine | Letters Correct | Accents Correct | Error Example |
 |---|---|---|---|
 | Tesseract | 6/8 | 3/8 | `Şükrü Öztürk` → `Sukriú Oztiirk` |
 | RapidOCR | 7/8 | 0/8 | `Aurélio Gonçalves` → `Aurelio Goncalves` |
-| **Os dois juntos** | **7/8** | **3/8** | — |
+| **Both Combined** | **7/8** | **3/8** | — |
 
-Nenhum dos dois resolve sozinho: o Tesseract preserva acento em português mas
-inventa letras em nome turco ou nórdico; o RapidOCR acerta as letras mas seu
-dicionário não tem acento nenhum. O padrão (`auto`) usa os dois — **letras do
-RapidOCR, acentos do Tesseract**, e só em letras sobre as quais os dois já
-concordam. Nenhum motor inventa um acento que não existe; ambos apenas deixam de
-ver, o que é o que torna essa regra segura.
+Neither engine is sufficient on its own: Tesseract preserves Latin accents but
+can misidentify characters in Turkish or Nordic names; RapidOCR identifies
+characters accurately but lacks diacritics in its dictionary. The default
+(`auto`) mode combines both: **characters from RapidOCR, accents from Tesseract**,
+applied only when both agree on the underlying letter. Neither engine invents
+accents that do not exist; they only omit them, making this rule robust.
 
-O Tesseract também devolve o **espaçamento**: o RapidOCR cola palavras
-(`ShadowChest`, `Level35epicCrypt`) porque detecta a frase inteira como um bloco,
-enquanto o Tesseract separa como o coletor antigo separava. Quando os dois
-concordam nas letras, vale a forma espaçada — é o que mantém os nomes novos
-comparáveis com os anos de registros já no banco.
+Tesseract also restores **word spacing**: RapidOCR frequently groups adjacent
+words together (`ShadowChest`, `Level35epicCrypt`) because it detects whole
+phrases as blocks, whereas Tesseract segments words correctly. When character
+readings agree, the spaced form is used — preserving consistency with years of
+historical records already stored in the database.
 
-Também ajuda antes do motor: o recorte é renderizado **pelo próprio Chrome** na
-escala configurada (`ocr.capture_scale`), então o motor vê letras realmente
-maiores, não uma ampliação borrada de um print pequeno.
+Furthermore, cropped regions are rendered **directly by Chrome** at the configured
+scale (`ocr.capture_scale`), allowing OCR engines to process genuinely larger
+glyphs rather than blurry upscaled screenshots.
 
-### Qual motor roda quando
+### Engine Execution Order
 
-O **Tesseract vai na frente** porque é o mais rápido, e o RapidOCR só é chamado
-quando a confiança do Tesseract cai — medido, leituras corretas marcam de 71 a
-96, enquanto as que ele errou marcaram 16 e 35. E como um clã repete os mesmos
-nomes e origens em milhares de baús, um texto já cruzado pelos dois motores não
-é conferido de novo: na prática, nenhuma conferência depois do primeiro lote.
+**Tesseract runs first** as it is the faster engine (~310 ms). RapidOCR is only
+called when Tesseract's confidence drops — benchmarking showed correct readings
+score between 71 and 96, whereas erroneous readings scored 16 and 35. Because
+clans repeat the same names and sources across thousands of chests, strings
+already cross-validated by both engines are cached: in practice, secondary checks
+drop to zero after the first batch.
 
-Comparação no painel real (4 baús, todos com 100% de acerto):
+Benchmark comparison on the chest panel (4 chests, 100% accuracy):
 
-| motor | tempo |
+| Engine | Duration |
 |---|---|
 | **Tesseract** (por, psm 6, oem 1) | **310 ms** |
-| RapidOCR (4 threads, sem classificador) | 462 ms |
+| RapidOCR (4 threads, no classifier) | 462 ms |
 | onnxtr `fast_tiny` | 1040 ms |
-| easyocr | não testado — exigiria ~2,5 GB de PyTorch |
+| easyocr | untested — would require ~2.5 GB PyTorch |
 
-### Velocidade
+### Speed Optimizations
 
-Medido no jogo real, por baú: **2278 ms no início, 212 ms agora** — mil baús
-caem de 38 para 3,5 minutos. O que mudou:
+Measured in-game, per chest: **from 2278 ms originally down to 212 ms** — 1000
+chests drop from 38 minutes to approximately 3.5 minutes. Improvements made:
 
-| mudança | efeito |
+| Change | Impact |
 |---|---|
-| ler os 4 baús da tela numa passagem só | o motor custa o mesmo para 4 que para 1 |
-| Tesseract na frente, RapidOCR sob demanda | 462 → 310 ms, e depois nem isso |
-| memória de leituras já conferidas | zero conferências após o primeiro lote |
-| Tesseract com um idioma só | 446 → 310 ms |
-| 4 threads no RapidOCR | 1646 → 375 ms (8 threads pioram: 1097 ms) |
-| sem o classificador de ângulo | −490 ms (texto de jogo não gira) |
-| `capture_scale` 3.0 → 2.0 | captura 477 → 263 ms, lê igual |
+| Read 4 screen chests in a single pass | Engine execution cost is identical for 1 vs 4 chests |
+| Tesseract first, RapidOCR on demand | 462 → 310 ms, dropping to 0 ms for cached names |
+| Memory cache for verified readings | Zero cross-checks after initial batches |
+| Single-language Tesseract model | 446 → 310 ms |
+| 4 threads in RapidOCR | 1646 → 375 ms (8 threads worsen: 1097 ms due to contention) |
+| Disabled angle classifier | −490 ms (game UI text is never rotated) |
+| `capture_scale` 2.0 instead of 3.0 | Capture time drops 477 → 263 ms with identical accuracy |
 
-Se quiser acelerar mais, o parâmetro **Pausa entre baús** (`timing.chest_click_delay`,
-0,25 s) é o que sobra: são 4 cliques por lote. Como os cliques vão de baixo para
-cima — abrir um baú só desloca os que estão abaixo dele — não é preciso esperar a
-lista assentar entre um e outro, então dá para baixá-lo com segurança.
+To optimize speed further, adjust **Chest click delay** (`timing.chest_click_delay`,
+default 0.25s). Because chests are clicked bottom-up — opening a chest only shifts
+items below it — there is no need to wait for the entire list to re-settle between
+clicks.
 
-### O banco corrige o OCR
+### Database-Assisted OCR Correction
 
-Um clã é um mundo fechado: algumas centenas de jogadores, uns noventa tipos de
-baú, uma centena de origens — tudo já em `collected_chests`, `members` e
-`player_name_mappings`. Antes de coletar um perfil, o coletor carrega essas
-listas (634 ms uma vez, contra 261 mil baús) e **reconhece** cada campo lido em
-vez de aceitá-lo cru.
+A clan environment is a bounded dataset: a few hundred members, around ninety
+chest types, and approximately one hundred sources — all previously recorded in
+`collected_chests`, `members`, and `player_name_mappings`. Prior to collecting a
+profile, the collector loads this vocabulary (a one-time ~634 ms query against
+hundreds of thousands of chests) and **matches** read values against known records.
 
-**O que o reconhecimento pode fazer — e só isso:**
+**What matching does:**
 
-1. aplicar uma correção que uma pessoa já cadastrou em `player_name_mappings`;
-2. resolver diferença de **formatação** contra uma grafia já conhecida — mesmas
-   letras e dígitos, diferindo em espaço, pontuação ou maiúsculas:
-   `AncientWarrior'sChest` é `Ancient Warrior's Chest`, `|IMPERATOR` é
-   `IMPERATOR`.
+1. Applies manual corrections configured in `player_name_mappings`.
+2. Resolves minor **formatting** discrepancies against known names — identical
+   letters and digits differing only by spacing, punctuation, or casing:
+   `AncientWarrior'sChest` → `Ancient Warrior's Chest`, `|IMPERATOR` → `IMPERATOR`.
 
-**O que ele não pode fazer: decidir que um nome é outro por serem parecidos.**
-Isso foi tentado e removido. Com semelhança de 0,88, neste banco,
-`Common Chest of Wealth` casa com `Uncommon Chest of Wealth` (0,957),
-`DaNyx Darkher` com `Nyx Darkher` (0,917) e `Pandeménia` com `Pandeménio`
-(0,900) — entidades diferentes.
+**What matching does NOT do:**
+It will never arbitrarily substitute one name for another based on fuzzy
+similarity alone. Similarity thresholds (e.g. 0.88) would conflate distinct entities:
+`Common Chest of Wealth` matches `Uncommon Chest of Wealth` (0.957),
+`DaNyx Darkher` matches `Nyx Darkher` (0.917), and `Pandeménia` matches `Pandeménio` (0.900).
+A misspelled name recorded in the database will be visible in web reports and can
+be mapped once in `player_name_mappings` for future runs. Conversely, mistakenly
+merging two distinct players leaves no trace and cannot be undone. Therefore,
+**unrecognized names are stored exactly as read**.
 
-E os dois erros não são simétricos: um nome gravado errado **aparece** nos
-relatórios, e a interface web junta os dois jogadores, gravando a correção em
-`player_name_mappings` para não repetir. Dois jogadores fundidos pelo coletor
-não deixam rastro para identificar nem desfazer. Por isso **nome desconhecido é
-gravado exatamente como foi lido**.
+Matching also improves speed: when all three fields match known vocabulary, the
+slower secondary engine check is bypassed.
 
-O reconhecimento continua servindo à **velocidade**: três campos já conhecidos
-dispensam o motor lento.
+Vocabulary hierarchy: **authoritative reference tables first, history second**.
+For sources, the reference table is `standard_chests` (which determines event
+scoring). For players, references are `members` and manual mappings. The historical
+records in `collected_chests` cover unlisted sources. Chest names follow frequency
+rankings.
 
-Os vocabulários têm hierarquia: **tabela de referência primeiro, histórico
-depois**. Para origens, a referência é `standard_chests` — que é onde a pontuação
-se apoia, então uma origem escrita de outro jeito não pontua. Para jogadores, são
-`members` e as correções manuais. O histórico de `collected_chests` cobre o que a
-referência não lista (18 origens em produção, com milhares de baús). Nomes de baú
-não têm tabela de referência e seguem por frequência.
+**Names differing only by numerical suffixes are kept distinct:** player names
+such as `Player`, `Player 1`, and `Player 11` are treated as different individuals.
+When alphabetic letters match but numeric digits do not, matching is rejected.
 
-A escolha é feita depois de tudo carregado, não linha a linha, para não depender
-da ordem — e isso importou: `standard_chests` lista `Hermes' Store` e
-`Hermes’ Store`, diferindo só no apóstrofo. Entre duas grafias oficiais decide o
-uso no histórico (746 baús contra 88). Onde existe, a coluna `alias` também é
-respeitada: `Doomsday` resolve para `Epic Undead squad`.
+### Profiles with Similar Names
 
-Validado contra a produção: as **86 correções feitas à mão continuam sendo
-aplicadas** e, do histórico inteiro, apenas 7 grafias mudam — todas de formatação
-(`Old Silver Wolf II]` → `Old Silver Wolf II`, `MM C` → `MMC`).
-
-**Quando o vocabulário é lido:** uma vez por perfil, no início da coleta (530 ms
-contra 261 mil baús), não a cada baú. Ele ainda **aprende durante a execução** —
-um membro novo é desconhecido só no primeiro baú dele, não nos cinquenta que
-mandar num evento. As consultas que sobram por baú (o mapeamento e o INSERT)
-custam 0,244 ms contra 238 ms de OCR, ou seja 0,1%: não vale agrupar, e o commit
-por baú é o que garante que uma queda no meio não perca o já coletado.
-
-**Nomes que diferem só no número não se misturam:** o clã tem `Willykins`,
-`Willykins 1` e `Willykins 11` como três pessoas. Quando as letras batem e os
-dígitos não, a correspondência é recusada — um membro novo fica desconhecido em
-vez de virar outro.
-
-**Ordem de autoridade:** `player_name_mappings` primeiro — são correções que uma
-pessoa decidiu, inclusive casos que nenhum algoritmo acerta (`Gwenllyian?` é
-`Gwenllyian` ou `Gwenllyian³`?). O vocabulário só responde o que a tabela não
-responde. E a gravação continua passando pela tabela, como sempre passou.
-
-### Perfis com nomes parecidos
-
-`Crash BR` e `Cash BR` se parecem o bastante para qualquer limiar aceitar os
-dois. Em vez de um teste "esse nome é o que procuro?", os nomes **competem**: o
-texto lido é comparado com todos os perfis da conta e só vence quem ganhar dos
-outros com folga. Empate é tratado como leitura ambígua — o que é recuperável —
-em vez de virar o perfil errado, que não é.
+Names like `Crash BR` and `Cash BR` are close enough that generic similarity tests
+could accept either. Instead of a simple threshold check, names **compete**: the
+scanned text is compared against all profiles registered under the account, and
+only wins if it decisively beats competitors. Ties are treated as ambiguous
+reads rather than risking switching to the wrong profile.
 
 ---
 
-## Onde cada problema é registrado
+## Error Handling & Problem Tracking
 
-Duas naturezas diferentes, dois destinos:
+Issues are categorized and routed to two destinations:
 
-**Problema de dado** — um baú que não deu para ler. Vai para
-`incomplete_chests`, com a captura da tela, e é resolvido por uma pessoa na tela
-de revisão. Tem decisão humana por trás, então tem lugar no banco.
+**Data Issues** — a chest that could not be read cleanly. Saved to
+`incomplete_chests` along with a screen capture, to be reviewed by an
+administrator in the web interface.
 
-**Falha de execução** — o menu não abriu, o banco recusou o INSERT, o clique
-parou de consumir baús, um perfil não foi alcançado. Fica **só no log local**
-(`execution_logs/collector_AAAA-MM-DD.log`), porque ninguém resolve isso por uma
-tela: é operação, não dado.
+**Execution Failures** — menus failing to open, database errors, clicks not
+consuming chests, or unreachable profiles. Recorded **exclusively in the local
+log** (`execution_logs/collector_YYYY-MM-DD.log`), as these require operational
+attention rather than manual data entry.
 
-A tabela `errors` está reservada para problemas que a interface venha a tratar e
-**não é escrita pelo coletor**. Usá-la para falhas de execução a transformaria
-numa cópia pior do arquivo de log.
+### Incomplete Chests Review Queue
 
-### Baú que não deu para ler vira fila de revisão
+An unreadable chest no longer interrupts collection: the **screenshot crop** is
+saved to `incomplete_chests.screenshot` (PNG, ~115 KB) and the chest is opened
+so collection proceeds.
 
-Um baú ilegível não interrompe mais a coleta: o **recorte da tela** é gravado em
-`incomplete_chests.screenshot` (PNG, ~115 KB) e o baú é aberto como qualquer
-outro. Antes ele ficava no jogo para ser lido de novo — sempre igual de ilegível.
+In the web interface under **Admin › Chests › Incomplete Chests**, pending
+records are displayed alongside their screenshots. Reviewers can read the image
+and either **correct** the entry (which writes to `collected_chests` **with the
+original collection timestamp** to preserve scoring cycles) or mark it as
+**reviewed and unrecoverable**.
 
-Na interface web, **Admin › Chests › Incomplete Chests** (com contador de
-pendentes) mostra a fila. Cada registro abre com a imagem ao lado do formulário;
-quem revisa lê o que o OCR não leu e ou **corrige** — o que grava em
-`collected_chests` **com a data original da coleta**, para contar no ciclo certo —
-ou marca como **analisado e não recuperável**, com nota.
+If a chest was manually recovered by a person, it is saved with `type = 1`
+(*Manual*), distinguishing automated OCR from manual entry.
 
-O registro nunca é apagado: fica marcado com o resultado e, quando corrigido,
-apontando para o `collected_chests` que gerou. Há ainda "reabrir", para desfazer
-uma decisão.
+**Empty screens do not immediately terminate runs.** The game occasionally
+delays refreshing chest lists after opening the last items. The collector waits
+1 second and checks again, terminating only if the screen remains empty.
 
-As colunas vieram por migration (`AddScreenshotAndReviewToIncompleteChests`) no
-banco atual, e por `ALTER TABLE` equivalente no antigo, cuja instância web não
-usa migrations — os dois têm a mesma estrutura. Ainda assim o coletor verifica a
-coluna antes de usá-la e grava sem imagem se ela faltar, em vez de falhar.
+Chests are read and written to the database before the open click is executed.
+If a click fails, the chest will simply be re-read on the next execution:
+duplicate entries are easily corrected, while missed chests cannot be recovered.
 
-O baú recuperado por uma pessoa é gravado com `type = 1` (*Manual*), como o
-schema já previa: dá para separar depois o que o coletor leu do que alguém
-reconstruiu a partir da imagem.
+---
 
-**Painel vazio não encerra a coleta na hora.** O jogo repõe a lista um instante
-depois que os últimos baús são abertos, e uma captura tirada nesse intervalo
-mostra a tela vazia — foi assim que uma execução parou com baús ainda esperando.
-Agora o coletor espera 1 s e olha de novo; só termina se continuar vazio.
-
-A ordem é ler, gravar, depois clicar. Se o clique falhar, o baú é lido de novo na
-próxima execução e pode duplicar — duplicata aparece e se corrige; baú perdido,
-não.
-
-## Estrutura
+## Directory Structure
 
 ```
-config/     config.json (todos os parâmetros) · calibration.json · schema.py
+config/     config.json (all parameters) · calibration.json · schema.py
 core/       browser (CDP) · ocr · vision · calibration · session · runner
 modules/    chest_collector · journal_parser · chat_automator
-gui/        app (configuração) · calibration_wizard
-database/   conexão e repositórios MySQL
+gui/        app (configuration UI) · calibration_wizard
+database/   MySQL connections and repositories
+utils/      logger · cancellation · text processing
 ```
 
-`config/schema.py` descreve cada parâmetro uma única vez; a interface, os
-valores padrão e a validação saem dele. Um parâmetro novo declarado lá aparece
-na tela sozinho.
+`config/schema.py` defines each parameter once: the GUI, default configuration,
+and validation logic are generated directly from it.
 
 ---
 
-## Arquivos de configuração
+## Configuration Files
 
-| Arquivo | Conteúdo | Versionado? |
+| File | Contents | Version Controlled? |
 |---|---|---|
-| `config/config.json` | contas, senhas, bancos, todos os parâmetros | não (senhas) |
-| `config/calibration.json` | posições da tela desta máquina | não |
-| `config/calib_refs/*.png` | imagens de referência da calibração | não |
+| `config/config.json` | Accounts, passwords, databases, all settings | No (contains credentials) |
+| `config/calibration.json` | Screen coordinates for this machine | No |
+| `config/calib_refs/*.png` | Calibration reference images | No |
 
-As senhas ficam em texto no `config.json`, como já ficavam no `position.cfg`. O
-arquivo está no `.gitignore`; proteja a pasta se a máquina for compartilhada.
+Passwords are stored in plaintext in `config.json` (as was previously done in
+`position.cfg`). This file is ignored by `.gitignore`; ensure folder permissions
+are protected on shared machines.

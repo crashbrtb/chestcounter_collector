@@ -90,7 +90,7 @@ class RapidOCRBackend:
     @staticmethod
     def available() -> Tuple[bool, str]:
         if not HAS_RAPIDOCR:
-            return False, "pacote 'rapidocr-onnxruntime' não instalado"
+            return False, "'rapidocr-onnxruntime' package not installed"
         return True, "RapidOCR (PaddleOCR/ONNX)"
 
     def _get_engine(self):
@@ -163,12 +163,12 @@ class TesseractBackend:
 
     def available(self) -> Tuple[bool, str]:
         if not HAS_TESSERACT:
-            return False, "pacote 'pytesseract' não instalado"
+            return False, "'pytesseract' package not installed"
         self._configure()
         try:
             return True, f"Tesseract {pytesseract.get_tesseract_version()}"
         except Exception as exc:
-            return False, f"Tesseract não encontrado no sistema ({exc})"
+            return False, f"Tesseract not found in system ({exc})"
 
     @staticmethod
     def _prepare(image: np.ndarray) -> np.ndarray:
@@ -320,7 +320,7 @@ class HybridBackend:
     which its dictionary has and RapidOCR's has not.
     """
 
-    name = "Tesseract + RapidOCR sob demanda"
+    name = "Tesseract + RapidOCR on demand"
 
     def __init__(self, rapid: RapidOCRBackend, tesseract: TesseractBackend,
                  confidence_gate: float = 60.0):
@@ -340,12 +340,12 @@ class HybridBackend:
         rapid_ok, rapid_reason = self.rapid.available()
         tess_ok, tess_reason = self.tesseract.available()
         if rapid_ok and tess_ok:
-            return True, (f"{tess_reason} + {rapid_reason} — o segundo entra só quando a "
-                          f"confiança cai abaixo de {self.confidence_gate:g}")
+            return True, (f"{tess_reason} + {rapid_reason} — secondary engine used only when "
+                          f"confidence drops below {self.confidence_gate:g}")
         if rapid_ok:
-            return True, f"{rapid_reason} (sem Tesseract: {tess_reason})"
+            return True, f"{rapid_reason} (without Tesseract: {tess_reason})"
         if tess_ok:
-            return True, f"{tess_reason} (sem RapidOCR: {rapid_reason})"
+            return True, f"{tess_reason} (without RapidOCR: {rapid_reason})"
         return False, f"{rapid_reason}; {tess_reason}"
 
     def read(self, image: np.ndarray, careful: bool = False, **kwargs) -> List[Dict[str, Any]]:
@@ -602,5 +602,5 @@ class OCREngine:
         """
         text = " ".join(line.text for line in self.read_lines(region, scale)).strip()
         winner = best_match(text, candidates, self.match_threshold)
-        logger.info(f"Region {region} reads '{text}' -> {winner or 'indefinido'}")
+        logger.info(f"Region {region} reads '{text}' -> {winner or 'undefined'}")
         return winner, text

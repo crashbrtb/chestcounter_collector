@@ -132,8 +132,8 @@ class ChestCollector(BaseModule):
             # the chest is opened like any other. Leaving it in the game only
             # meant reading the same unreadable thing again next run.
             logger.warning(
-                f"[{self.profile_label}] Nada legível na área do baú; captura enviada para a "
-                f"fila de revisão."
+                f"[{self.profile_label}] Nothing readable in chest area; screenshot sent to "
+                f"review queue."
             )
             repo.insert_incomplete_chest("", "", "", self._encode(crop))
             return 2
@@ -149,14 +149,14 @@ class ChestCollector(BaseModule):
                     self.vocabulary.learn(chest, player, source)
                 return 1
             logger.error(
-                f"[{self.profile_label}] O banco recusou o baú '{chest}' de '{player}' "
+                f"[{self.profile_label}] Database rejected chest '{chest}' from '{player}' "
                 f"({source})."
             )
             return 0
 
         logger.warning(
-            f"[{self.profile_label}] Baú incompleto -> nome='{chest}' jogador='{player}' "
-            f"origem='{source}' | lido={rows}. Captura enviada para a fila de revisão."
+            f"[{self.profile_label}] Incomplete chest -> name='{chest}' player='{player}' "
+            f"source='{source}' | read={rows}. Screenshot sent to review queue."
         )
         repo.insert_incomplete_chest(chest, player, source, self._encode(crop))
         return 2
@@ -275,15 +275,15 @@ class ChestCollector(BaseModule):
         if not self.vocabulary or not self.vocabulary.is_useful or len(rows) < 3:
             return rows, bool(rows)
 
-        chest_name, chest_ok = self._resolved(self.vocabulary.chests, rows[0], "nome do baú")
+        chest_name, chest_ok = self._resolved(self.vocabulary.chests, rows[0], "chest name")
         player_label, player_read = parse_key_value_line(rows[1])
         source_label, source_read = parse_key_value_line(rows[2])
 
         player, how = self.vocabulary.resolve_player(player_read)
-        source, source_ok = self._resolved(self.vocabulary.sources, source_read, "origem")
+        source, source_ok = self._resolved(self.vocabulary.sources, source_read, "source")
 
         if player and player != player_read:
-            logger.info(f"Jogador '{player_read}' gravado como '{player}' ({how}).")
+            logger.info(f"Player '{player_read}' recorded as '{player}' ({how}).")
 
         rows = list(rows)
         rows[0] = chest_name
@@ -302,7 +302,7 @@ class ChestCollector(BaseModule):
         """
         found = vocabulary.resolve(reading)
         if found and found != reading:
-            logger.info(f"Formatação — {field}: '{reading}' gravado como '{found}'.")
+            logger.info(f"Formatting — {field}: '{reading}' recorded as '{found}'.")
         return (found, True) if found else (reading, False)
 
     def collect_tab(self, label: str, repo: ChestRepository) -> Tuple[int, int]:
@@ -330,7 +330,7 @@ class ChestCollector(BaseModule):
             # but only once, and for the whole panel, since it costs the same
             # for four chests as for one.
             if any(not ok for _rows, ok in resolved) and self.vocabulary and self.vocabulary.is_useful:
-                logger.info("Um campo não bateu com o que o banco conhece; relendo com o motor lento.")
+                logger.info("A field did not match known database entries; re-reading with secondary engine.")
                 batch = self._read_batch(chests, scale, careful=True)
                 resolved = [self._resolve(rows) for rows in batch]
 
@@ -378,12 +378,12 @@ class ChestCollector(BaseModule):
         if not profile.has_database:
             logger.error(f"Profile '{profile.label}' has no database configured; skipping it.")
             return {"success": False, "collected": 0, "incomplete": 0, "profile": profile.name,
-                    "reason": "sem banco de dados"}
+                    "reason": "no database configured"}
 
         with DatabaseConnection(profile.database, profile.label) as connection:
             if not connection:
                 return {"success": False, "collected": 0, "incomplete": 0, "profile": profile.name,
-                        "reason": "falha de conexão com o banco"}
+                        "reason": "database connection failure"}
 
             repo = ChestRepository(connection)
             self.profile_label = profile.label
@@ -391,9 +391,9 @@ class ChestCollector(BaseModule):
                                if self.config.section("ocr").get("use_known_names", True) else None)
 
             if not self.open_gift_menu():
-                logger.error(f"[{profile.label}] O menu de presentes do clã não abriu.")
+                logger.error(f"[{profile.label}] Clan gift menu did not open.")
                 return {"success": False, "collected": 0, "incomplete": 0, "profile": profile.name,
-                        "reason": "menu de presentes não abriu"}
+                        "reason": "gift menu did not open"}
 
             self.switch_tab("gifts_tab", "Gifts")
             gifts, gifts_incomplete = self.collect_tab("Gifts", repo)
@@ -423,5 +423,5 @@ class ChestCollector(BaseModule):
 
     def run(self, profile: Optional[ProfileConfig] = None, **kwargs) -> Dict[str, Any]:
         if profile is None:
-            raise ValueError("ChestCollector.run precisa de um perfil.")
+            raise ValueError("ChestCollector.run requires a profile.")
         return self.collect_for_profile(profile)
