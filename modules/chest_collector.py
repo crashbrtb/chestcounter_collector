@@ -58,6 +58,38 @@ EMPTY_RETRIES = 1
 EMPTY_RETRY_WAIT = 1.0
 
 
+def visible_chests(calibration, vision, browser) -> List[dict]:
+    """
+    Every chest on screen: where its 'Open' button is and where its text is.
+
+    The panel shows four at a time. The text of chest N sits at a fixed offset
+    from its own button - the same offset the calibration recorded between
+    `chest_area` and `open_button_area` - so one calibrated row describes all of
+    them and nothing extra has to be marked by hand.
+
+    It lives outside the module so the calibration wizard can ask exactly the
+    question the run asks - 'which chests does this calibration see right now?'
+    - instead of a lookalike that could pass while the run finds nothing.
+    """
+    chest_area = calibration.region("chest_area")
+    button_area = calibration.region("open_button_area")
+    if not (chest_area and button_area):
+        return []
+
+    # Look down the whole column: the calibrated box covers only the first row.
+    _view_w, view_h = browser.viewport()
+    top = max(0, button_area[1] - 10)
+    column = (button_area[0], top, button_area[2], max(button_area[3], view_h - top))
+
+    buttons = vision.find_all(calibration.ref_path("open_button"), column,
+                              base_scale=calibration.image_scale)
+    offset = chest_area[1] - button_area[1]
+    return [{
+        "button": button,
+        "text_area": (chest_area[0], button[1] + offset, chest_area[2], chest_area[3]),
+    } for button in buttons]
+
+
 class ChestCollector(BaseModule):
     """Collects the 'Gifts' and 'Triumphal Gifts' tabs for a profile."""
 
@@ -170,31 +202,7 @@ class ChestCollector(BaseModule):
         return buffer.tobytes() if ok else None
 
     def _visible_chests(self) -> List[dict]:
-        """
-        Every chest on screen: where its 'Open' button is and where its text is.
-
-        The panel shows four at a time. The text of chest N sits at a fixed
-        offset from its own button - the same offset the calibration recorded
-        between `chest_area` and `open_button_area` - so one calibrated row
-        describes all of them and nothing extra has to be marked by hand.
-        """
-        chest_area = self.calibration.region("chest_area")
-        button_area = self.calibration.region("open_button_area")
-        if not (chest_area and button_area):
-            return []
-
-        # Look down the whole column: the calibrated box covers only the first row.
-        _view_w, view_h = self.browser.viewport()
-        top = max(0, button_area[1] - 10)
-        column = (button_area[0], top, button_area[2], max(button_area[3], view_h - top))
-
-        buttons = self.vision.find_all(self.calibration.ref_path("open_button"), column,
-                                       base_scale=self.calibration.image_scale)
-        offset = chest_area[1] - button_area[1]
-        return [{
-            "button": button,
-            "text_area": (chest_area[0], button[1] + offset, chest_area[2], chest_area[3]),
-        } for button in buttons]
+        return visible_chests(self.calibration, self.vision, self.browser)
 
     def _look_again(self, label: str) -> List[dict]:
         """

@@ -44,6 +44,23 @@ ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("blue")
 
 
+def labelled_entry(parent, label: str, width: int, **options) -> ctk.CTkEntry:
+    """
+    An entry with its name written above it.
+
+    A placeholder is not a label: it disappears the moment anything is typed,
+    so a filled-in account was four anonymous boxes and the only way to tell
+    the login from the nickname was to clear one and see what came back.
+    """
+    column = ctk.CTkFrame(parent, fg_color="transparent")
+    column.pack(side="left", padx=6)
+    ctk.CTkLabel(column, text=label, font=ctk.CTkFont(size=11), text_color=MUTED,
+                 anchor="w").pack(anchor="w")
+    entry = ctk.CTkEntry(column, width=width, **options)
+    entry.pack(anchor="w")
+    return entry
+
+
 class LogPipe(logging.Handler):
     """Feeds the application log into the interface without blocking the worker thread."""
 
@@ -198,47 +215,63 @@ class AccountCard(ctk.CTkFrame):
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=12, pady=(12, 4))
 
-        self.enabled = ctk.CTkCheckBox(header, text="", width=28)
-        self.enabled.pack(side="left")
+        active = ctk.CTkFrame(header, fg_color="transparent")
+        active.pack(side="left")
+        ctk.CTkLabel(active, text="Active", font=ctk.CTkFont(size=11),
+                     text_color=MUTED).pack(anchor="w")
+        self.enabled = ctk.CTkCheckBox(active, text="", width=28)
+        self.enabled.pack(anchor="w", pady=(6, 0))
         if account.enabled:
             self.enabled.select()
 
-        self.name = ctk.CTkEntry(header, placeholder_text="Account nickname", width=190)
+        self.name = labelled_entry(header, "Account name", 190,
+                                   placeholder_text="a name only you see")
         self.name.insert(0, account.name)
-        self.name.pack(side="left", padx=6)
 
-        self.login = ctk.CTkEntry(header, placeholder_text="Game email / username", width=250)
+        self.login = labelled_entry(header, "Game login (email or username)", 250,
+                                    placeholder_text="what you type in the game")
         self.login.insert(0, account.login)
-        self.login.pack(side="left", padx=6)
 
-        self.password = ctk.CTkEntry(header, placeholder_text="Password", show="*", width=170)
+        password_column = ctk.CTkFrame(header, fg_color="transparent")
+        password_column.pack(side="left", padx=6)
+        ctk.CTkLabel(password_column, text="Password", font=ctk.CTkFont(size=11),
+                     text_color=MUTED).pack(anchor="w")
+        password_row = ctk.CTkFrame(password_column, fg_color="transparent")
+        password_row.pack(anchor="w")
+        self.password = ctk.CTkEntry(password_row, show="*", width=170,
+                                     placeholder_text="game password")
         self.password.insert(0, account.password)
-        self.password.pack(side="left", padx=6)
-
-        self.show_password = ctk.CTkButton(header, text="👁", width=36, fg_color="#21262d",
+        self.password.pack(side="left")
+        self.show_password = ctk.CTkButton(password_row, text="👁", width=36, fg_color="#21262d",
                                            command=self._toggle_password)
-        self.show_password.pack(side="left")
+        self.show_password.pack(side="left", padx=(4, 0))
 
         ctk.CTkButton(header, text="Remove account", width=120, fg_color="#21262d",
                       hover_color=ERROR_COLOR,
-                      command=lambda: self.on_remove(self)).pack(side="right")
+                      command=lambda: self.on_remove(self)).pack(side="right", pady=(17, 0))
 
         second = ctk.CTkFrame(self, fg_color="transparent")
-        second.pack(fill="x", padx=12, pady=(2, 0))
-        ctk.CTkLabel(second, text="Browser profile", font=ctk.CTkFont(size=11),
-                     text_color=MUTED).pack(side="left", padx=(30, 6))
-        self.browser_profile = ctk.CTkEntry(second, width=170, font=ctk.CTkFont(size=11),
-                                            placeholder_text="empty = default profile")
+        second.pack(fill="x", padx=12, pady=(6, 0))
+        self.browser_profile = labelled_entry(second, "Browser profile", 190,
+                                              placeholder_text="empty = default profile")
         self.browser_profile.insert(0, account.browser_profile)
-        self.browser_profile.pack(side="left")
         ctk.CTkLabel(second,
                      text="Only needed for multiple accounts: each keeps its own session in a folder, "
                           "avoiding email verification codes.",
                      font=ctk.CTkFont(size=11), text_color=MUTED,
-                     wraplength=560, justify="left").pack(side="left", padx=10)
+                     wraplength=560, justify="left").pack(side="left", padx=10, pady=(17, 0))
 
         ctk.CTkLabel(self, text="Profiles (cities) for this account, collected in this order:",
-                     font=ctk.CTkFont(size=11), text_color=MUTED).pack(anchor="w", padx=14, pady=(6, 2))
+                     font=ctk.CTkFont(size=11), text_color=MUTED).pack(anchor="w", padx=14, pady=(10, 2))
+
+        # Column names for the rows below, at the widths the rows themselves use.
+        headings = ctk.CTkFrame(self, fg_color="transparent")
+        headings.pack(fill="x", padx=12)
+        for text, width, padding in (("Active", 28, (10, 4)),
+                                     ("Profile name (exactly as the game shows it)", 260, (4, 4)),
+                                     ("Database", 250, (8, 8))):
+            ctk.CTkLabel(headings, text=text, width=width, anchor="w",
+                         font=ctk.CTkFont(size=11), text_color=MUTED).pack(side="left", padx=padding)
 
         self.profiles_box = ctk.CTkFrame(self, fg_color="transparent")
         self.profiles_box.pack(fill="x", padx=12, pady=(0, 6))

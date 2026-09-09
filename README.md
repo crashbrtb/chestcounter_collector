@@ -167,8 +167,25 @@ moving — ensuring accounts with many profiles are fully traversed. If clicking
 the profile menu does not change the screen, the log explicitly reports this
 rather than misattributing the issue to OCR.
 
+The **🧰 Test chest capture** button tests the three chest steps together, which
+is the only way they mean anything: the "Open" button is found by its picture and
+each chest's text is placed relative to the button found for it. It runs the
+collector's own detection against the live screen and draws the answer — a box
+around every button found, a box around the text area that belongs to it, and
+what was read inside each one — so a panel of four chests is confirmed before a
+run rather than after.
+
+**Advance automatically** also performs the step. A step that marks a button
+presses it, waits, takes a fresh capture and only then opens the next step, so
+the game arrives at the screen that step describes instead of being left a screen
+behind. If the click changes nothing the wizard stays where it is and says so.
+Steps that only mark an area to read have nothing to press. The "Open" button is
+never pressed automatically: it would consume a chest that nothing records.
+
 Each step can be recalibrated individually without redoing the entire sequence.
-The final two steps (store detection and close button) are optional.
+The first two steps (store detection and close button) are optional and come
+first because the store is what covers everything else — the game opens it by
+itself, and closing it is what clears the screen for the rest of the sequence.
 
 ---
 

@@ -58,3 +58,24 @@
     percentile 14), so a median under 12 now says so once per run, in the first panel instead
     of in the database three hours later. Measured in page pixels, so the threshold does not
     move with ocr.capture_scale.
+
+2.0.6 - Calibration wizard improvements.
+  - The two optional store steps come first. The store is what covers everything else - the
+    game opens it by itself - so marking it and its X, and closing it, is now what clears the
+    screen before the profile and clan steps rather than being asked for at the end.
+  - "Advance automatically" now performs the step. Marking a button and moving on left the
+    game a screen behind: the next step asked for something inside a menu whose button had
+    just been marked but never pressed, so the whole sequence had to be navigated by hand
+    while calibrating. Each step that marks a button now presses it, waits, takes a fresh
+    capture and only then opens the next step. If the click changes nothing on screen the
+    wizard stays where it is and says so, instead of walking on over the wrong screen.
+    Steps that only mark an area to read have nothing to press and just recapture. The
+    'Open' button is never pressed automatically: that would consume a chest nothing records.
+  - New "Test chest capture" button. The three chest steps only work together - the button is
+    found by its picture and each chest's text is placed relative to the button found for it -
+    so testing them one at a time proved nothing. It now runs the collector's own detection
+    against the live screen and draws the answer: a box per button, a box per text area, and
+    what was read in each one, so four chests can be confirmed before a run instead of after.
+  - Account fields have labels. A placeholder is not a label: it disappears as soon as
+    something is typed, which left a filled-in account as four anonymous boxes. The profile
+    rows got column names for the same reason.

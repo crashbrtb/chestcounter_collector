@@ -56,6 +56,15 @@ class Step(NamedTuple):
     title: str
     instruction: str
     optional: bool = False
+    # Whether clicking what this step marks is what takes the game to the screen
+    # the NEXT step needs. The wizard's "advance automatically" performs it, so
+    # the game follows the wizard instead of being left a screen behind.
+    #
+    # It is off for everything that only marks a place to read (`area` steps),
+    # for the store marker - a title is not a button - and deliberately for the
+    # 'Open' button: clicking that one consumes a real chest that nothing would
+    # record, and it is the last required step anyway.
+    acts: bool = False
 
     @property
     def is_rectangle(self) -> bool:
@@ -69,43 +78,56 @@ class Step(NamedTuple):
 # The order is the order of a real collection run: each step leaves the game in
 # the state the next one expects, so calibrating means playing through it once.
 STEPS: List[Step] = [
-    Step("profile_menu_button", "click", "Profile menu",
-         "In the logged-in game, click the button that opens the PROFILES (cities) list."),
-    Step("profiles_list_area", "area", "Profiles list",
-         "Mark the AREA where profile names appear.\n"
-         "This is where each profile's configured name will be searched.\n"
-         "Click two opposite corners."),
-    Step("profile_switch_confirm", "region", "Confirm switch button",
-         "Mark the BUTTON that confirms switching profile.\n"
-         "Its image is saved so it can be found even if its position shifts."),
-    Step("profile_name_display_area", "area", "Active profile name",
-         "Once inside a profile, mark the area where the game displays the ACTIVE profile name.\n"
-         "This verifies that switching succeeded."),
-    Step("clan_button", "click", "Clan button",
-         "Click the button that opens the CLAN menu."),
-    Step("gift_button", "click", "Gifts button",
-         "Inside the clan menu, click GIFTS."),
-    Step("gifts_tab", "click", "Gifts tab",
-         "Click the standard gifts tab."),
-    Step("triumphal_gifts_tab", "click", "Triumphal gifts tab",
-         "Click the triumphal gifts tab."),
-    Step("chest_area", "area", "Chest text",
-         "Mark the area where the CHEST NAME, player, and source appear.\n"
-         "This text is saved to the database — leave some margin."),
-    Step("open_button_area", "area", "Search area for 'Open' button",
-         "Mark the area where the OPEN chest button appears.\n"
-         "Can be generous: the button is located by image matching inside it."),
-    Step("open_button", "region", "Open button",
-         "Mark only the button to open the chest, tightly.\n"
-         "This image is the reference searched for each chest."),
+    # The two store steps come first because the store is what covers everything
+    # else. The game opens it by itself, and with it on top the profile menu and
+    # the clan buttons underneath cannot be reached - so calibrating the marker
+    # and its X, and closing it, is what clears the screen for all the rest.
     Step("store_marker", "region", "Store open (optional)",
          "Leave the in-game STORE open and mark a fixed part of it (such as the title).\n"
          "This is how the collector knows the store is blocking the screen.\n"
          "Skip if you do not need this protection.",
          optional=True),
     Step("store_close_button", "click", "Close store (optional)",
-         "Click the X that CLOSES the store.",
-         optional=True),
+         "Click the X that CLOSES the store.\n"
+         "With the store closed, the game is on the screen the next step needs.",
+         optional=True, acts=True),
+    Step("profile_menu_button", "click", "Profile menu",
+         "In the logged-in game, click the button that opens the PROFILES (cities) list.",
+         acts=True),
+    Step("profiles_list_area", "area", "Profiles list",
+         "Mark the AREA where profile names appear.\n"
+         "This is where each profile's configured name will be searched.\n"
+         "Click two opposite corners."),
+    Step("profile_switch_confirm", "region", "Confirm switch button",
+         "Mark the BUTTON that confirms switching profile.\n"
+         "Its image is saved so it can be found even if its position shifts.",
+         acts=True),
+    Step("profile_name_display_area", "area", "Active profile name",
+         "Once inside a profile, mark the area where the game displays the ACTIVE profile name.\n"
+         "This verifies that switching succeeded."),
+    Step("clan_button", "click", "Clan button",
+         "Click the button that opens the CLAN menu.",
+         acts=True),
+    Step("gift_button", "click", "Gifts button",
+         "Inside the clan menu, click GIFTS.",
+         acts=True),
+    Step("gifts_tab", "click", "Gifts tab",
+         "Click the standard gifts tab.",
+         acts=True),
+    Step("triumphal_gifts_tab", "click", "Triumphal gifts tab",
+         "Click the triumphal gifts tab.",
+         acts=True),
+    Step("chest_area", "area", "Chest text",
+         "Mark the area where the CHEST NAME, player, and source appear.\n"
+         "Mark the FIRST chest of the list only — the others are derived from it.\n"
+         "This text is saved to the database — leave some margin."),
+    Step("open_button_area", "area", "Search area for 'Open' button",
+         "Mark the area where the OPEN chest button appears, for that same first chest.\n"
+         "Can be generous: the button is located by image matching inside it."),
+    Step("open_button", "region", "Open button",
+         "Mark only the button to open the chest, tightly.\n"
+         "This image is the reference searched for each chest.\n"
+         "It is never clicked automatically: that would open a chest nothing records."),
 ]
 
 STEPS_BY_NAME = {step.name: step for step in STEPS}
@@ -228,6 +250,19 @@ class Calibration:
         if not region:
             return None
         return (region[0] + region[2] // 2, region[1] + region[3] // 2)
+
+    def action_point(self, name: str) -> Optional[Point]:
+        """
+        Where to click to operate what a step marked.
+
+        A point step is its own target; a rectangle step is operated at the
+        centre of what was marked, which is how the wizard performs a step
+        before moving on to the next one.
+        """
+        step = STEPS_BY_NAME.get(name)
+        if step is None:
+            return None
+        return self.region_center(name) if step.is_rectangle else self.point(name)
 
     def require(self, *names: str) -> List[str]:
         """Names among these that are not calibrated - for a clear message before starting."""
