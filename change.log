@@ -23,3 +23,38 @@
   - Full English UI localization: configuration interface, calibration wizard, schema definitions, tooltips, dialogs, and popups.
   - Standardized all application logs, exception messages, cancellation tokens, and database status messages to English.
 
+2.0.5 - OCR engines swapped round, measured on 314 real chest panels.
+  - The corpus: every panel saved before its chests were clicked, 3750 lines over 1250 chests,
+    the same images then fed to each engine in its own process. The measurement that set the
+    old arrangement had used a single panel.
+  - RapidOCR now reads and Tesseract is consulted only about words mixing digits with
+    digit-shaped letters. Of 257 lines whose spelling was checked against the panel by eye,
+    the old arrangement got 204 wrong and this one gets 8.
+  - The premise the old arrangement rested on is no longer true: RapidOCR's PP-OCRv6 models
+    do carry Latin diacritics. It returned 42 accented lines against Tesseract's 13 and was
+    right on every contested one, each of which Tesseract had got wrong: it dropped the cedilla
+    from a Turkish surname, turned another Turkish name into a different name entirely, put the
+    wrong mark on an o (two different wrong marks, on different panels), lowercased the L in
+    VaLi, uppercased the i in EMiRBeY, and read a superscript two as a question mark.
+  - The confidence gate is gone. It fired on 14 of 315 reads while 204 lines went out wrong:
+    Tesseract is not hesitant about these names, it is confident and wrong. Tesseract also
+    spelt three players two ways each, splitting one person's chests across two database rows;
+    the new arrangement spelt none of them two ways.
+  - Fixed: ocr.threads had been doing nothing since the rapidocr package was renamed. The key
+    moved to EngineConfig.onnxruntime.intra_op_num_threads and the library accepts unknown keys
+    without raising, so every read had silently run at the package default. Reads went from
+    1231 ms to 551 ms per panel. The value is now read back after construction and a warning is
+    logged if it did not apply.
+  - Speeds per panel after that fix: RapidOCR TINY 131 ms, Tesseract 258 ms, RapidOCR 551 ms,
+    the combination 557 ms. A 1200-chest run spends about three minutes inside the engine.
+  - Limit worth knowing: the error counts come from the 257 lines the engines disagreed about.
+    The other 3493 were read identically by all of them, so a shared mistake would not show up.
+    The counts are a floor, not a ceiling.
+  - Added: a warning when the text comes back too small to read well. A run collected for
+    thirty minutes off a degraded picture - words glued together on more chests than it
+    collected, every accent dropped, one player split across six spellings - and nothing in
+    the log said anything was wrong; it was only found by reading the database afterwards.
+    Two clean runs read the panel at a median 15 page pixels per line (1222 lines, tenth
+    percentile 14), so a median under 12 now says so once per run, in the first panel instead
+    of in the database three hours later. Measured in page pixels, so the threshold does not
+    move with ocr.capture_scale.

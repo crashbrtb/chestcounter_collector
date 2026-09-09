@@ -158,14 +158,19 @@ SECTIONS: List[Section] = [
         "that Tesseract struggles with.",
         [
             Field("engine", "choice", "OCR Engine", "auto",
-                  "auto = both engines combined when installed: letters come from RapidOCR "
-                  "(substantially better with foreign names) and accents come from Tesseract. "
-                  "Use 'rapidocr' or 'tesseract' to force a single engine.",
+                  "auto = both engines combined when installed: RapidOCR reads, and Tesseract is "
+                  "consulted only about words that mix digits with digit-shaped letters, where "
+                  "RapidOCR reads the zeros of 'T6000SK' as the letter o. Measured over 314 real "
+                  "panels: 'auto' takes 557 ms per panel and got 8 of 257 contested lines wrong, "
+                  "'tesseract' takes 258 ms and got 204 wrong. Forcing 'tesseract' saves about "
+                  "300 ms per panel and misspells roughly one line in twenty.",
                   choices=("auto", "hybrid", "rapidocr", "tesseract")),
             Field("threads", "int", "RapidOCR threads", 4,
-                  "CPU cores used by the neural engine. Benchmark on this machine: default "
-                  "ONNXRuntime took 1646 ms per read, 4 threads took 375 ms, and 8 threads worsened "
-                  "to 1097 ms due to thread contention.",
+                  "CPU cores used by the neural engine. Measured on 40 real panels: 1 thread "
+                  "1271 ms per read, 2 threads 689 ms, 4 threads 524 ms, and 8 threads back to "
+                  "1269 ms as the cores contend. More is not better past 4. If the log warns that "
+                  "RapidOCR ignored the setting, this box is doing nothing and reads are running "
+                  "at the package default — the key moved between package versions once already.",
                   minimum=1, maximum=32),
             Field("capture_scale", "float", "Capture upscale factor", 2.0,
                   "The region is rendered directly by Chrome at this scale, without interpolation. "
@@ -181,11 +186,6 @@ SECTIONS: List[Section] = [
                   "(spacing, punctuation, capitalization) and entries in player_name_mappings — similar names "
                   "are NEVER merged, as an erroneous merge leaves no trace to undo. Also skips the slower "
                   "engine when all three fields are already recognized."),
-            Field("confidence_gate", "float", "Tesseract confidence gate", 60.0,
-                  "Below this score, readings are cross-checked with RapidOCR. "
-                  "Benchmarked: correct readings score 71 to 96; erroneous readings score 16 and 35. "
-                  "Increase to cross-check more often (slower, safer).",
-                  minimum=0.0, maximum=100.0),
             Field("tesseract_lang", "str", "Tesseract language", "por",
                   "Single language model. Benchmarked: 'por+eng' costs 446 ms and 'por' alone costs 310 ms "
                   "with identical results — Portuguese covers the Latin alphabet."),
