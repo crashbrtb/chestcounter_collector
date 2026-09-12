@@ -95,6 +95,14 @@ class CollectorRunner:
             problems.append(f"OCR unavailable: {ocr_reason}.")
         else:
             logger.info(f"OCR engine: {ocr_reason}")
+            from core.ocr import RapidOCRBackend
+            rapid_ok, _ = RapidOCRBackend.available()
+            if not rapid_ok:
+                logger.warning(
+                    "ALERTA CRÍTICO: RapidOCR não está disponível neste computador! "
+                    "O Tesseract está sendo usado como fallback. O Tesseract frequentemente falha "
+                    "ao ler a lista de perfis e nomes complexos. Execute install.bat para instalar RapidOCR."
+                )
 
         return problems
 

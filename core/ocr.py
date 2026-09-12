@@ -86,15 +86,16 @@ except ImportError:
 # old call returns (triples, elapsed), the new one a RapidOCROutput - so which
 # one answered is remembered here and the difference is absorbed below.
 RAPIDOCR_API = ""
+RAPIDOCR_IMPORT_ERROR = ""
 try:
     from rapidocr import RapidOCR
     RAPIDOCR_API = "v3"
-except ImportError:
+except Exception as _exc_v3:
     try:
         from rapidocr_onnxruntime import RapidOCR
         RAPIDOCR_API = "legacy"
-    except ImportError:
-        pass
+    except Exception as _exc_legacy:
+        RAPIDOCR_IMPORT_ERROR = f"rapidocr (v3): {_exc_v3}; rapidocr-onnxruntime: {_exc_legacy}"
 HAS_RAPIDOCR = bool(RAPIDOCR_API)
 
 from utils.logger import logger
@@ -162,7 +163,8 @@ class RapidOCRBackend:
     @staticmethod
     def available() -> Tuple[bool, str]:
         if not HAS_RAPIDOCR:
-            return False, "'rapidocr' package not installed"
+            detail = f": {RAPIDOCR_IMPORT_ERROR}" if RAPIDOCR_IMPORT_ERROR else ""
+            return False, f"'rapidocr' package not installed or failed to load{detail}"
         return True, "RapidOCR (PaddleOCR/ONNX)"
 
     # Where this build keeps the ONNXRuntime thread count. It has moved twice:
@@ -359,21 +361,32 @@ class TesseractBackend:
 
         lines = []
         for words in grouped.values():
-            left = min(w["left"] for w in words)
-            top = min(w["top"] for w in words)
-            right = max(w["left"] + w["width"] for w in words)
-            bottom = max(w["top"] + w["height"] for w in words)
-            # This used to also report the weakest word's score, which is what
-            # the old confidence gate read to decide whether RapidOCR should have
-            # a look. Nothing asks any more: the gate was measured firing on 14
-            # of 315 reads while 204 lines went out wrong, so it was taken out.
-            lines.append({
-                "text": " ".join(w["text"] for w in words),
-                "center": ((left + right) / 2, (top + bottom) / 2),
-                "confidence": sum(w["conf"] for w in words) / len(words),
-                "top": top,
-                "height": bottom - top,
-            })
+            words.sort(key=lambda w: w["left"])
+            segments = []
+            current_seg = [words[0]]
+            for w in words[1:]:
+                prev = current_seg[-1]
+                gap = w["left"] - (prev["left"] + prev["width"])
+                threshold_gap = max(30, int(prev["height"] * 1.8))
+                if gap > threshold_gap:
+                    segments.append(current_seg)
+                    current_seg = [w]
+                else:
+                    current_seg.append(w)
+            segments.append(current_seg)
+
+            for seg in segments:
+                left = min(w["left"] for w in seg)
+                top = min(w["top"] for w in seg)
+                right = max(w["left"] + w["width"] for w in seg)
+                bottom = max(w["top"] + w["height"] for w in seg)
+                lines.append({
+                    "text": " ".join(w["text"] for w in seg),
+                    "center": ((left + right) / 2, (top + bottom) / 2),
+                    "confidence": sum(w["conf"] for w in seg) / len(seg),
+                    "top": top,
+                    "height": bottom - top,
+                })
         return lines
 
 

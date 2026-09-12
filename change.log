@@ -1,3 +1,8 @@
+2.0.6 - OCR diagnostics and fallback improvements:
+  - Added clear visibility and alerts in the calibration wizard and runner preflight when RapidOCR is unavailable.
+  - Improved Tesseract fallback: wide horizontal gap splitting prevents adjacent columns from merging into broken single lines.
+  - Added environment verification tool (Verificar_Ambiente.bat) to diagnose Python, RapidOCR, ONNXRuntime, VC++ Redistributable, and Tesseract.
+
 0.1   - Initial release.
 0.2   - Multiple accounts support.
 1.5.0 - Modular redesign (Core, Database, Config, Modules) and OCR-based account switching.

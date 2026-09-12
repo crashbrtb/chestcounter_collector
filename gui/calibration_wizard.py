@@ -538,12 +538,26 @@ class CalibrationWizard(ctk.CTkToplevel):
 
             if step.type == "area":
                 region = self.calibration.region(step.name)
+                backend = self.ctx.ocr.backend()
+                backend_name = backend.name
                 rows = self.ctx.ocr.read_rows(region)
+                from core.ocr import RapidOCRBackend
+                rapid_available, _ = RapidOCRBackend.available()
+                is_fallback = "tesseract" in backend_name.lower() and not rapid_available
+
                 if rows:
-                    message = f"✔ Read in this area: {' | '.join(rows[:6])}"
-                    colour = OK_COLOR
+                    sample = ' | '.join(rows[:6])
+                    if is_fallback:
+                        message = (
+                            f"⚠ Read [{backend_name} - FALLBACK]: {sample}\n"
+                            f"ALERTA: RapidOCR indisponível! O Tesseract tem precisão baixa para perfis e nomes. Execute install.bat para instalar RapidOCR."
+                        )
+                        colour = WARN_COLOR
+                    else:
+                        message = f"✔ Read [{backend_name}]: {sample}"
+                        colour = OK_COLOR
                 else:
-                    message = ("✖ No text read in this area. Is the correct screen open? "
+                    message = (f"✖ No text read in this area using {backend_name}. Is the correct screen open? "
                                "Does the area cover the full text?")
                     colour = ERROR_COLOR
             else:   # region: search reference image across whole page
