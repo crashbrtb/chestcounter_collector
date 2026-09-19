@@ -1,2 +1,17 @@
+# Local machine configuration (contains account and database passwords)
+config/config.json
 position.cfg
-config.cfg 
+config.cfg
+
+# Calibration: screen positions calibrated on this machine
+config/calibration.json
+config/calib_refs/
+
+# Execution logs and environment
+execution_logs/
+venv/
+python/
+
+# Python
+__pycache__/
+*.pyc

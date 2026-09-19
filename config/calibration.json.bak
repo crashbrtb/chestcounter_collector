@@ -1,0 +1,91 @@
+{
+  "viewport": {
+    "width": 1536,
+    "height": 730
+  },
+  "points": {
+    "profile_menu_button": [
+      1624,
+      24
+    ],
+    "clan_button": [
+      1016,
+      825
+    ],
+    "gift_button": [
+      563,
+      356
+    ],
+    "gifts_tab": [
+      801,
+      257
+    ],
+    "triumphal_gifts_tab": [
+      1047,
+      260
+    ],
+    "store_close_button": [
+      1871,
+      104
+    ]
+  },
+  "regions": {
+    "profiles_list_area": {
+      "left": 714,
+      "top": 346,
+      "width": 843,
+      "height": 366
+    },
+    "profile_switch_confirm": {
+      "left": 971,
+      "top": 585,
+      "width": 176,
+      "height": 38
+    },
+    "profile_name_display_area": {
+      "left": 711,
+      "top": 82,
+      "width": 220,
+      "height": 26
+    },
+    "chest_area": {
+      "left": 786,
+      "top": 291,
+      "width": 434,
+      "height": 85
+    },
+    "open_button_area": {
+      "left": 1292,
+      "top": 339,
+      "width": 117,
+      "height": 39
+    },
+    "open_button": {
+      "left": 1292,
+      "top": 339,
+      "width": 116,
+      "height": 42
+    },
+    "store_marker": {
+      "left": 3,
+      "top": 166,
+      "width": 155,
+      "height": 104
+    }
+  },
+  "step_viewports": {
+    "profile_menu_button": [
+      1536,
+      730
+    ],
+    "clan_button": [
+      1536,
+      730
+    ],
+    "store_close_button": [
+      1536,
+      730
+    ]
+  },
+  "created_at": "2026-09-07 23:29:02"
+}

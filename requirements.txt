@@ -1,9 +1,35 @@
-opencv-python
-numpy
-pytesseract
-Pillow
-pyautogui
-mariadb
-python-imagesearch
-screeninfo
-mysql-connector-python
+# --- OCR ---------------------------------------------------------------------
+# RapidOCR is the primary engine: PaddleOCR models on ONNXRuntime, reading UI text
+# with diacritics and foreign names. pytesseract serves as fallback.
+#
+# The package name changed: 'rapidocr-onnxruntime' capped at 1.4.4 (Jan/2025)
+# with Requires-Python <3.13. The successor is named simply 'rapidocr' (>=3.8,<4).
+# It does not bundle onnxruntime in its dependencies, so onnxruntime must be
+# specified here explicitly.
+rapidocr>=3.0.0
+onnxruntime>=1.19.0
+pytesseract>=0.3.13
+
+# Optional GPU acceleration (ocr.use_gpu in config): replace the line above with
+# 'onnxruntime-directml>=1.20.0' (uninstall 'onnxruntime' first - the two packages
+# cannot coexist, both install under the same 'onnxruntime' import name). Works with
+# any DirectX 12 GPU (NVIDIA/AMD/Intel) on Windows 10+, no CUDA/cuDNN version to match.
+# Measured on an RTX 4050 with the current PP-OCRv6 models: 403 ms/panel on 4 CPU
+# threads against 103 ms on the GPU. Run tools/benchmark_ocr.py on the target machine
+# before relying on this in production - a weaker or integrated GPU can measure slower
+# than the CPU for a model this small, and it should be checked, not assumed.
+
+# --- Browser (CDP) -----------------------------------------------------------
+websocket-client>=1.7.0
+requests>=2.31.0
+
+# --- Image -------------------------------------------------------------------
+opencv-python>=4.8.0
+numpy>=1.24.0
+Pillow>=10.0.0
+
+# --- GUI ---------------------------------------------------------------------
+customtkinter>=5.2.0
+
+# --- Database ----------------------------------------------------------------
+mysql-connector-python>=8.0.33
