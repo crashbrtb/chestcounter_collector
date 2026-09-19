@@ -196,12 +196,12 @@ class CalibrationWizard(ctk.CTkToplevel):
             self.calibration.set_viewport(width, height)
         self._draw()
 
-        fora = self.calibration.out_of_bounds(image.shape[1], image.shape[0])
-        if fora:
-            nomes = ", ".join(STEPS_BY_NAME[n].title for n in fora if n in STEPS_BY_NAME)
+        outside = self.calibration.out_of_bounds(image.shape[1], image.shape[0])
+        if outside:
+            names = ", ".join(STEPS_BY_NAME[n].title for n in outside if n in STEPS_BY_NAME)
             self._set_state(
                 f"⚠ These steps are OUTSIDE the {image.shape[1]}x{image.shape[0]} page and "
-                f"will never work: {nomes}. They were recorded with the window at a different size — "
+                f"will never work: {names}. They were recorded with the window at a different size — "
                 f"click each in the list and redo.", ERROR_COLOR)
             return
 
@@ -550,7 +550,7 @@ class CalibrationWizard(ctk.CTkToplevel):
                     if is_fallback:
                         message = (
                             f"⚠ Read [{backend_name} - FALLBACK]: {sample}\n"
-                            f"ALERTA: RapidOCR indisponível! O Tesseract tem precisão baixa para perfis e nomes. Execute install.bat para instalar RapidOCR."
+                            f"WARNING: RapidOCR unavailable! Tesseract has low accuracy for profile columns and names. Run install.bat to install RapidOCR."
                         )
                         colour = WARN_COLOR
                     else:
@@ -604,7 +604,7 @@ class CalibrationWizard(ctk.CTkToplevel):
         threading.Thread(target=self._run_chest_test, daemon=True).start()
 
     def _run_chest_test(self):
-        from modules.chest_collector import visible_chests
+        from modules.chest_collector import generation_time, split_row, visible_chests
 
         try:
             self.ctx.sync_viewport()
@@ -622,7 +622,23 @@ class CalibrationWizard(ctk.CTkToplevel):
             # Read each chest's own area rather than the whole panel at once:
             # the point here is which text belongs to which chest, and that is
             # exactly what a per-chest read shows.
-            readings = [self.ctx.ocr.read_rows(chest["text_area"]) for chest in chests]
+            #
+            # And read it the way the run reads it, down to cutting off the
+            # panel's right-hand column: a test that showed the countdown and the
+            # 'Open' caption glued to the player and the source would be showing
+            # something the database never sees.
+            column_left = min((chest["button"][0] for chest in chests), default=None)
+            readings, countdowns = [], []
+            for chest in chests:
+                rows, minutes_left = [], None
+                for row in self.ctx.ocr.group_row_lines(self.ctx.ocr.read_lines(chest["text_area"])):
+                    text, minutes = split_row(row, column_left)
+                    if minutes is not None and minutes_left is None:
+                        minutes_left = minutes
+                    if text:
+                        rows.append(text)
+                readings.append(rows)
+                countdowns.append((minutes_left, generation_time(minutes_left)))
 
             complete = sum(1 for rows in readings if len(rows) >= 3 and all(rows[:3]))
             if complete == len(chests):
@@ -633,7 +649,7 @@ class CalibrationWizard(ctk.CTkToplevel):
                 message = (f"⚠ {len(chests)} chest(s) found, {complete} read completely. "
                            f"Check the marked areas in the window that just opened.")
                 colour = WARN_COLOR
-            self._post(message, colour, chests=(image, chests, readings))
+            self._post(message, colour, chests=(image, chests, readings, countdowns))
         except Exception as exc:  # noqa: BLE001
             self._post(f"✖ Chest test failed: {exc}", ERROR_COLOR)
 
@@ -679,7 +695,7 @@ class ChestTestWindow(ctk.CTkToplevel):
     to look.
     """
 
-    def __init__(self, master, image, chests, readings):
+    def __init__(self, master, image, chests, readings, countdowns):
         super().__init__(master)
         self.title("Chest capture test")
         self.geometry("1020x780")
@@ -709,8 +725,9 @@ class ChestTestWindow(ctk.CTkToplevel):
 
         listing = ctk.CTkScrollableFrame(self, fg_color=CANVAS_BG)
         listing.pack(fill="both", expand=True, padx=16, pady=(0, 8))
-        for position, (chest, rows) in enumerate(zip(chests, readings), start=1):
-            self._entry(listing, position, chest, rows)
+        for position, (chest, rows, countdown) in enumerate(zip(chests, readings, countdowns),
+                                                            start=1):
+            self._entry(listing, position, chest, rows, countdown)
 
         ctk.CTkButton(self, text="Close", width=110, height=34, fg_color="#21262d",
                       command=self.destroy).pack(pady=(0, 14))
@@ -752,7 +769,7 @@ class ChestTestWindow(ctk.CTkToplevel):
         self.preview.configure(image=self._photo)
 
     @staticmethod
-    def _entry(parent, position: int, chest, rows):
+    def _entry(parent, position: int, chest, rows, countdown=(None, None)):
         from utils.text_utils import parse_key_value_line
 
         name = rows[0].strip() if len(rows) >= 1 else ""
@@ -783,6 +800,22 @@ class ChestTestWindow(ctk.CTkToplevel):
             ctk.CTkLabel(values, text=f"{label}: {value or '— missing —'}",
                          font=ctk.CTkFont(size=12),
                          text_color="#c9d1d9" if value else WARN_COLOR).pack(side="left", padx=(0, 18))
+
+        # The countdown is not stored as text, but it is what dates the row, so
+        # a calibration that cannot read it is as broken as one that cannot read
+        # the player - and nothing else would say so.
+        minutes_left, generated_at = countdown
+        if minutes_left is None:
+            ctk.CTkLabel(card, text="Countdown: not read — this chest would be dated on arrival "
+                                    "instead of when the game made it",
+                         font=ctk.CTkFont(size=12), text_color=WARN_COLOR,
+                         justify="left").pack(anchor="w", padx=24, pady=(0, 6))
+        else:
+            ctk.CTkLabel(card,
+                         text=f"Countdown: {minutes_left // 60}h{minutes_left % 60:02d} left  ·  "
+                              f"generated {generated_at:%d/%m %H:%M}  ·  saved as collected_at",
+                         font=ctk.CTkFont(size=12), text_color=MUTED,
+                         justify="left").pack(anchor="w", padx=24, pady=(0, 6))
 
         # The raw rows only matter when something is wrong with them: they are
         # what shows whether a line was cut in half or landed in the wrong chest.

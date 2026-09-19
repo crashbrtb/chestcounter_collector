@@ -2,6 +2,7 @@
 Data access layer and repositories for Chests, Player Mappings, and Event Scores.
 """
 
+from datetime import datetime
 from typing import Optional, List, Dict, Any
 from mysql.connector import MySQLConnection, Error
 from utils.logger import logger
@@ -36,17 +37,35 @@ class ChestRepository:
         finally:
             cursor.close()
 
-    def insert_chest(self, name: str, player: str, source: str) -> bool:
-        """Inserts a successfully parsed chest into collected_chests table."""
+    def insert_chest(self, name: str, player: str, source: str,
+                     collected_at: Optional[datetime] = None) -> bool:
+        """
+        Inserts a successfully parsed chest into collected_chests table.
+
+        `collected_at` is when the chest was GENERATED, worked out from the
+        countdown the game printed next to it - not when the collector read it.
+        The two are as much as twenty hours apart, and everything downstream
+        counts by day against a reset at 14:00, so the difference decides which
+        day a chest belongs to. Passing None leaves the column to the database's
+        own `current_timestamp`, which is what happens when the countdown could
+        not be read, and on a database old enough not to have the column.
+        """
         # Resolve mapped player name
         mapped_player = self.get_player_name_mapping(player)
+        dated = collected_at is not None and self.has_column("collected_chests", "collected_at")
 
         cursor = self.connection.cursor()
         try:
-            query = "INSERT INTO collected_chests (name, player, source) VALUES (%s, %s, %s)"
-            cursor.execute(query, (name, mapped_player, source))
+            if dated:
+                query = ("INSERT INTO collected_chests (name, player, source, collected_at) "
+                         "VALUES (%s, %s, %s, %s)")
+                cursor.execute(query, (name, mapped_player, source, collected_at))
+            else:
+                query = "INSERT INTO collected_chests (name, player, source) VALUES (%s, %s, %s)"
+                cursor.execute(query, (name, mapped_player, source))
             self.connection.commit()
-            logger.debug(f"Inserted chest: '{name}', player: '{mapped_player}', source: '{source}'")
+            logger.debug(f"Inserted chest: '{name}', player: '{mapped_player}', source: '{source}'"
+                         + (f", generated {collected_at:%Y-%m-%d %H:%M:%S}" if dated else ""))
             return True
         except Error as e:
             logger.error(f"Error inserting chest into collected_chests: {e}")
@@ -77,7 +96,8 @@ class ChestRepository:
         return self._columns[key]
 
     def insert_incomplete_chest(self, name: str, player: str, source: str,
-                                screenshot: Optional[bytes] = None) -> bool:
+                                screenshot: Optional[bytes] = None,
+                                collected_at: Optional[datetime] = None) -> bool:
         """
         Files a chest that could not be read, with the picture of it.
 
@@ -86,21 +106,31 @@ class ChestRepository:
         says only that something was missed, and the chest itself is already
         gone from the game.
 
+        `collected_at` is the chest's generation time, as in `insert_chest` -
+        the countdown is often legible on a chest whose name is not, and a row
+        corrected months later should carry the hour the chest was made, not the
+        hour someone got round to reading it.
+
         Where the database has no `screenshot` column - the older of the two -
         the row is still written, just without the image.
         """
         with_image = screenshot is not None and self.has_column("incomplete_chests", "screenshot")
+        dated = collected_at is not None and self.has_column("incomplete_chests", "collected_at")
+
+        columns = ["name", "player", "source"]
+        values: List[Any] = [name, player, source]
+        if with_image:
+            columns.append("screenshot")
+            values.append(screenshot)
+        if dated:
+            columns.append("collected_at")
+            values.append(collected_at)
 
         cursor = self.connection.cursor()
         try:
-            if with_image:
-                cursor.execute(
-                    "INSERT INTO incomplete_chests (name, player, source, screenshot) "
-                    "VALUES (%s, %s, %s, %s)", (name, player, source, screenshot))
-            else:
-                cursor.execute(
-                    "INSERT INTO incomplete_chests (name, player, source) VALUES (%s, %s, %s)",
-                    (name, player, source))
+            cursor.execute(
+                f"INSERT INTO incomplete_chests ({', '.join(columns)}) "
+                f"VALUES ({', '.join(['%s'] * len(values))})", tuple(values))
             self.connection.commit()
             logger.warning(
                 f"Incomplete chest filed for review: '{name}', player '{player}', source '{source}'"

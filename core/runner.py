@@ -18,6 +18,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from config.settings import AccountConfig, ProfileConfig
+from database.job_runs import JobRunReporter
 from modules.chest_collector import ChestCollector
 from utils.cancel import Cancelled, cancellation
 from utils.logger import logger, screenshot_dir
@@ -33,6 +34,20 @@ REQUIRED_STEPS = (
 
 class RunnerError(RuntimeError):
     pass
+
+
+def final_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    One result per profile: its last attempt.
+
+    Every attempt is appended to the results, so a profile retried after a
+    failure shows up once failed and once successful; only the last one says how
+    the profile ended. A failure of a whole account (no profile) stays as is.
+    """
+    last: Dict[tuple, Dict[str, Any]] = {}
+    for result in results:
+        last[(result.get("account", ""), result.get("profile", ""))] = result
+    return list(last.values())
 
 
 class CollectorRunner:
@@ -99,27 +114,52 @@ class CollectorRunner:
             rapid_ok, _ = RapidOCRBackend.available()
             if not rapid_ok:
                 logger.warning(
-                    "ALERTA CRÍTICO: RapidOCR não está disponível neste computador! "
-                    "O Tesseract está sendo usado como fallback. O Tesseract frequentemente falha "
-                    "ao ler a lista de perfis e nomes complexos. Execute install.bat para instalar RapidOCR."
+                    "CRITICAL WARNING: RapidOCR is not available on this machine! "
+                    "Falling back to Tesseract. Tesseract frequently fails to read "
+                    "profile lists and foreign/accented player names. Run install.bat to install RapidOCR."
                 )
 
         return problems
 
     # -------------------------------------------------------------- execution
     def run(self, only_account: Optional[str] = None, only_profile: Optional[str] = None) -> Dict[str, Any]:
+        """
+        The collection, with its heartbeat written to the site's `job_runs`.
+
+        Whatever ends the run - success, a misconfiguration, a crash, ESC - the
+        row is closed with it, so the site's health check sees how it went. The
+        GUI and main.py both come through here.
+        """
         started = datetime.now()
+        reporter = JobRunReporter(self._selected_accounts(only_account), only_profile)
+        reporter.start()
+        try:
+            summary = self._run(started, only_account, only_profile)
+        except Cancelled as exc:
+            reporter.finish(final_results(self.results), cancelled=True, error=str(exc))
+            raise
+        except Exception as exc:  # noqa: BLE001 - recorded, then passed on untouched
+            reporter.finish(final_results(self.results), error=str(exc) or exc.__class__.__name__)
+            raise
+        reporter.finish(final_results(self.results), duration=summary["duration"])
+        return summary
+
+    def _selected_accounts(self, only_account: Optional[str]) -> List[AccountConfig]:
+        accounts = self.ctx.config.enabled_accounts()
+        if only_account:
+            accounts = [a for a in accounts if only_account.lower() in a.name.lower()]
+        return accounts
+
+    def _run(self, started: datetime, only_account: Optional[str], only_profile: Optional[str]) -> Dict[str, Any]:
         problems = self.preflight()
         if problems:
             for problem in problems:
                 logger.error(problem)
             raise RunnerError("Execution cannot start: " + " | ".join(problems))
 
-        accounts = self.ctx.config.enabled_accounts()
-        if only_account:
-            accounts = [a for a in accounts if only_account.lower() in a.name.lower()]
-            if not accounts:
-                raise RunnerError(f"Account '{only_account}' not found among enabled accounts.")
+        accounts = self._selected_accounts(only_account)
+        if only_account and not accounts:
+            raise RunnerError(f"Account '{only_account}' not found among enabled accounts.")
 
         self.ctx.start_browser()
 
@@ -242,7 +282,10 @@ class CollectorRunner:
     def _summary(self, started: datetime) -> Dict[str, Any]:
         collected = sum(r.get("collected", 0) for r in self.results)
         incomplete = sum(r.get("incomplete", 0) for r in self.results)
-        failures = [r for r in self.results if not r.get("success")]
+        # By each profile's last attempt: a profile that failed once and then
+        # succeeded on the retry is not a failure.
+        final = final_results(self.results)
+        failures = [r for r in final if not r.get("success")]
         duration = datetime.now() - started
 
         logger.info("=" * 60)
@@ -256,7 +299,7 @@ class CollectorRunner:
         return {
             "collected": collected,
             "incomplete": incomplete,
-            "profiles_done": len([r for r in self.results if r.get("success")]),
+            "profiles_done": len([r for r in final if r.get("success")]),
             "failures": failures,
             "duration": str(duration),
             "results": self.results,

@@ -105,7 +105,7 @@ echo ===========================================================================
 echo  [COMPLETE]
 echo.
 echo  Next steps (double-click, no command line needed):
-echo    1) Configure.bat (or Configurar.bat) - set up accounts, profiles, and databases
+echo    1) Configure.bat - set up accounts, profiles, and databases
 echo    2) Click "1 · Open game in Chrome", log in and navigate to the clan screen
 echo    3) Click "2 · Calibrate" (or Calibrate.bat) - mark controls on the capture
 echo    4) Click "▶ Run collection now" to test

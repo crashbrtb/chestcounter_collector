@@ -1,13 +1,13 @@
-# Configuração real da máquina (contém senhas de contas e de banco)
+# Local machine configuration (contains account and database passwords)
 config/config.json
 position.cfg
 config.cfg
 
-# Calibração: posições da tela desta máquina, refeitas pelo assistente
+# Calibration: screen positions calibrated on this machine
 config/calibration.json
 config/calib_refs/
 
-# Execução
+# Execution logs and environment
 execution_logs/
 venv/
 python/

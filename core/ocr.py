@@ -137,6 +137,13 @@ class TextLine(NamedTuple):
     confidence: float            # 0..100, whichever engine produced it
     top: int                     # page coordinate, for ordering lines
     height: int                  # page pixels, used to tell rows apart
+    # The horizontal extent, for telling blocks apart WITHIN a row. Two things
+    # printed at opposite ends of the same line - the player's name on the left
+    # and the chest's countdown on the right - are one row to `group_rows` and
+    # two separate blocks to the eye. The gap between them is what says so, and
+    # measuring a gap needs where each box ends, not only where its centre is.
+    left: int = 0
+    width: int = 0
 
 
 class RapidOCRBackend:
@@ -156,8 +163,9 @@ class RapidOCRBackend:
 
     name = "RapidOCR"
 
-    def __init__(self, threads: int = 4):
+    def __init__(self, threads: int = 4, use_gpu: bool = False):
         self.threads = max(1, int(threads or 4))
+        self.use_gpu = bool(use_gpu)
         self._engine = None
 
     @staticmethod
@@ -180,10 +188,12 @@ class RapidOCRBackend:
     # been running on the default, which is 1271 ms against 524 ms at four
     # threads. So the value is read back below rather than assumed.
     _THREAD_KEY = "EngineConfig.onnxruntime.intra_op_num_threads"
+    _DML_KEY = "EngineConfig.onnxruntime.use_dml"
 
     def _get_engine(self):
         if self._engine is None:
-            logger.debug(f"Loading RapidOCR models ({self.threads} threads)...")
+            logger.debug(f"Loading RapidOCR models ({self.threads} threads"
+                         f"{', GPU (DirectML)' if self.use_gpu else ''})...")
             self._engine = self._build_engine()
         return self._engine
 
@@ -196,12 +206,27 @@ class RapidOCRBackend:
         run: a slower read still credits the chest to the right player. It is
         worth a warning, though, and not a debug line - silence here is what let
         the setting go unapplied for a whole package migration.
+
+        GPU is the same story, one level up: DirectML is what RapidOCR asks for
+        `use_dml` on Windows, and it needs the 'onnxruntime-directml' package in
+        place of plain 'onnxruntime' - the two cannot both be installed. Asking
+        for it without that package present is not an error, RapidOCR logs a
+        warning and reads on the CPU instead, so the setting is passed through
+        unconditionally rather than probed for first.
+
+        Measured on an RTX 4050, current PP-OCRv6 models: 403 ms per panel on 4
+        CPU threads against 103 ms on the GPU, same text read back both ways.
+        That is not automatic on weaker hardware - `tools/benchmark_ocr.py`
+        measures a given machine directly rather than assuming the same ratio.
         """
         if RAPIDOCR_API == "v3":
+            params = {self._THREAD_KEY: self.threads}
+            if self.use_gpu:
+                params[self._DML_KEY] = True
             try:
-                engine = RapidOCR(params={self._THREAD_KEY: self.threads})
+                engine = RapidOCR(params=params)
             except Exception as exc:
-                logger.warning(f"RapidOCR did not accept the thread setting ({exc}); "
+                logger.warning(f"RapidOCR did not accept the thread/GPU settings ({exc}); "
                                f"using its own defaults, which measure about twice as slow.")
                 return RapidOCR()
             applied = self._applied_threads(engine)
@@ -212,9 +237,9 @@ class RapidOCRBackend:
                     f"will run at the package default, roughly twice as slow.")
             return engine
         try:
-            return RapidOCR(intra_op_num_threads=self.threads)
+            return RapidOCR(intra_op_num_threads=self.threads, use_dml=self.use_gpu)
         except TypeError:
-            # Older builds do not accept the threading argument.
+            # Older builds do not accept the threading/GPU arguments.
             return RapidOCR()
 
     @classmethod
@@ -280,6 +305,8 @@ class RapidOCRBackend:
                 "confidence": float(confidence) * 100.0,   # RapidOCR reports 0..1
                 "top": min(ys),
                 "height": max(ys) - min(ys),
+                "left": min(xs),
+                "width": max(xs) - min(xs),
             })
         return lines
 
@@ -386,6 +413,8 @@ class TesseractBackend:
                     "confidence": sum(w["conf"] for w in seg) / len(seg),
                     "top": top,
                     "height": bottom - top,
+                    "left": left,
+                    "width": right - left,
                 })
         return lines
 
@@ -597,7 +626,8 @@ class OCREngine:
         self.min_confidence = float(config.get("min_confidence", 45.0))
         self.match_threshold = float(config.get("name_match_threshold", 0.75))
         self._preference = str(config.get("engine", "auto")).lower()
-        self._rapid = RapidOCRBackend(threads=int(config.get("threads", 4) or 4))
+        self._rapid = RapidOCRBackend(threads=int(config.get("threads", 4) or 4),
+                                       use_gpu=bool(config.get("use_gpu", False)))
         self._tesseract = TesseractBackend(
             config.get("tesseract_path", ""), config.get("tesseract_lang", "por")
         )
@@ -682,6 +712,8 @@ class OCREngine:
                 confidence=item["confidence"],
                 top=int(region[1] + item["top"] / factor),
                 height=max(1, int(item["height"] / factor)),
+                left=int(region[0] + item.get("left", 0) / factor),
+                width=max(1, int(item.get("width", 0) / factor)),
             ))
         lines.sort(key=lambda line: (line.top, line.center[0]))
         logger.debug(f"OCR {self.backend().name} in {region}: {[line.text for line in lines]}")
@@ -726,8 +758,15 @@ class OCREngine:
         """
         return [text for text, _y in self.read_rows_positioned(region, scale)]
 
-    def group_rows(self, lines: List[TextLine]) -> List[Tuple[str, int]]:
-        """Joins boxes that sit on the same visual row; returns (text, centre y)."""
+    def group_row_lines(self, lines: List[TextLine]) -> List[List[TextLine]]:
+        """
+        The same boxes, gathered into visual rows and ordered left to right.
+
+        This is `group_rows` before the text of a row is joined up, for callers
+        that need to know WHERE inside the row each piece was printed - the chest
+        panel prints the countdown at the far right of the same row as the
+        player's name, and only the positions tell them apart.
+        """
         rows: List[List[TextLine]] = []
         for line in lines:
             placed = False
@@ -741,13 +780,18 @@ class OCREngine:
             if not placed:
                 rows.append([line])
 
-        joined = []
         for row in rows:
             row.sort(key=lambda line: line.center[0])
+        rows.sort(key=lambda row: row[0].center[1])
+        return rows
+
+    def group_rows(self, lines: List[TextLine]) -> List[Tuple[str, int]]:
+        """Joins boxes that sit on the same visual row; returns (text, centre y)."""
+        joined = []
+        for row in self.group_row_lines(lines):
             text = " ".join(line.text for line in row).strip()
             if text:
                 joined.append((text, row[0].center[1]))
-        joined.sort(key=lambda item: item[1])
         return joined
 
     def read_rows_positioned(self, region: Tuple[int, int, int, int],

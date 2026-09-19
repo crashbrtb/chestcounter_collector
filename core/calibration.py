@@ -119,6 +119,7 @@ STEPS: List[Step] = [
          acts=True),
     Step("chest_area", "area", "Chest text",
          "Mark the area where the CHEST NAME, player, and source appear.\n"
+         "Include the TIME LEFT counter on the right: it is what dates the chest.\n"
          "Mark the FIRST chest of the list only — the others are derived from it.\n"
          "This text is saved to the database — leave some margin."),
     Step("open_button_area", "area", "Search area for 'Open' button",

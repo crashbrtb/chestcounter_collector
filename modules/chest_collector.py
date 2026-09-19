@@ -6,14 +6,22 @@ showing, write it to the database, then click. Reading before clicking is the
 whole trick - once the button is clicked the entry is gone and the next one has
 slid into its place.
 
+The same reading also dates the chest. The panel shows how long each one has
+left to live, and a chest waits up to twenty hours to be opened, so the hour the
+collector happened to pass by says nothing about when the chest was generated -
+which is the hour the counting is done by, and the hour `collected_at` holds.
+See CHEST_LIFETIME_MINUTES.
+
 The loop is bounded by a count, and by nothing cleverer than that. Reading the
 screen cannot tell whether a click worked: this game hands out long runs of
 identical chests - 3 479 in a row at the record - so an unchanged panel is
 perfectly normal. See the note on MAX_CHESTS_PER_TAB below.
 """
 
+import re
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from config.settings import ProfileConfig
 from database.db_connection import DatabaseConnection
@@ -57,6 +65,158 @@ MAX_CHESTS_PER_TAB = 5000
 EMPTY_RETRIES = 1
 EMPTY_RETRY_WAIT = 1.0
 
+# How long a chest lives. It appears in the list showing '19 h : 59 m' and the
+# countdown falls from there, so what the panel shows is not a property of the
+# reading - it is the chest's age, measured backwards: 18 h : 59 m left means an
+# hour has already passed since the chest was generated.
+#
+# That is what `collected_at` has to hold. Storing the moment the collector read
+# the chest instead put a chest generated at 10:51 in the database at 18:06, and
+# with the game's day rolling over at 14:00 that moves it into the next day's
+# count entirely. A run is minutes long but the chests in it can be up to twenty
+# hours old, so the distortion is not a rounding error - it is a whole day.
+CHEST_LIFETIME_MINUTES = 19 * 60 + 59
+
+# The countdown as the panel prints it: two units, largest first, with whatever
+# the engine makes of the separator between them - '19 h : 53 m', '19h:53m',
+# '19h 53m' have all been read off the same screen. Days appear in the game's
+# other timers ('4 d 23 h') and are accepted here so that such a reading is
+# understood rather than half-matched.
+COUNTDOWN = re.compile(
+    r"(?<![0-9A-Za-z])"
+    r"(?:(\d{1,3})\s*d\s*[:.]?\s*(\d{1,2})\s*h"
+    r"|(\d{1,2})\s*h\s*[:.]?\s*(\d{1,2})\s*m)"
+    r"(?![0-9A-Za-z])",
+    re.IGNORECASE,
+)
+
+# One half of it - '19h', '53m' - which is how the reading arrives when the
+# engine boxes each number separately.
+COUNTDOWN_PART = re.compile(r"(?<![0-9A-Za-z])\d{1,3}\s*[dhm](?![0-9A-Za-z])", re.IGNORECASE)
+
+# What separates two blocks printed on the same row from two pieces of the same
+# block. Measured on the real panel: inside the countdown - its label, its
+# hourglass, its numbers - the boxes sit 1 to 13 px apart, while the gap between
+# the player's name and the countdown that follows it on the same line is 260 px.
+# Anything in between is a comfortable place to draw the line.
+MIN_BLOCK_GAP = 20
+BLOCK_GAP_PER_HEIGHT = 2.5
+
+
+def countdown_minutes(text: str) -> Optional[int]:
+    """The countdown in a piece of text, as minutes, or None if there is none."""
+    match = COUNTDOWN.search(text or "")
+    if not match:
+        return None
+    days, day_hours, hours, minutes = match.groups()
+    if days is not None:
+        return int(days) * 24 * 60 + int(day_hours) * 60
+    return int(hours) * 60 + int(minutes)
+
+
+def generation_time(minutes_left: Optional[int], now: Optional[datetime] = None) -> Optional[datetime]:
+    """
+    When a chest showing `minutes_left` on its countdown was generated.
+
+    None when the countdown could not be read - the caller then lets the
+    database stamp the row itself, which is the old behaviour and the only
+    honest answer when the age is unknown.
+
+    The age is clamped to the chest's lifetime at both ends: a misread that
+    claims more time than a chest can have would otherwise date the row in the
+    future, and one that claims a negative remainder would date it before any
+    chest could exist.
+    """
+    if minutes_left is None:
+        return None
+    age = min(max(CHEST_LIFETIME_MINUTES - minutes_left, 0), CHEST_LIFETIME_MINUTES)
+    return (now or datetime.now()).replace(microsecond=0) - timedelta(minutes=age)
+
+
+def _same_block(left, right) -> bool:
+    """Whether two boxes on a row are close enough to be one block of text."""
+    gap = right.left - (left.left + left.width)
+    tolerance = max(MIN_BLOCK_GAP, int(BLOCK_GAP_PER_HEIGHT * max(left.height, right.height)))
+    return gap <= tolerance
+
+
+def _before_countdown(text: str) -> str:
+    """
+    What a row says before its countdown, read off the words alone.
+
+    The fallback for when the boxes cannot be separated by position - one box
+    holding both the player and the countdown, or a row printed so tightly that
+    the two are one block. The countdown's label is recognised by its shape
+    rather than its wording: the trailing tokens that end in a delimiter, plus
+    the lone glyph of the hourglass.
+
+    What is left is kept only if it still carries its own label. A row that was
+    nothing but the countdown ('Time left: 19 h : 52 m') ends up without one and
+    is dropped, which is the point - kept, it would become an extra row, and the
+    chest's three fields are read by position.
+
+    A label of two words leaves its first word behind ('Night King Time'): where
+    the box is one, nothing says which words were the label and which the name.
+    That is a suffix on a name the vocabulary still matches, and it is the
+    fallback of a fallback - both engines in use box the two separately.
+    """
+    match = COUNTDOWN.search(text or "")
+    if not match:
+        return (text or "").strip()
+    head = text[:match.start()].split()
+    while head and (len(head[-1]) <= 1 or head[-1].endswith((":", "."))):
+        head.pop()
+    kept = " ".join(head)
+    return kept if ":" in kept else ""
+
+
+def split_row(row: Sequence, column_left: Optional[int] = None) -> Tuple[str, Optional[int]]:
+    """
+    One row of the panel, separated into the chest's own text and its countdown.
+
+    The panel puts three things on the same line: the chest's text on the left,
+    then its countdown, then its 'Open' button. The calibrated chest area spans
+    all of them - it has to, since the countdown is what dates the chest - so
+    grouping the line by eye, which is what `group_rows` does, hands back
+    'From: Night King Time left: 12h:44m' and 'Source: Epic Chimera squad Open'
+    as single strings. Stored like that, the button's caption becomes part of a
+    source's name and the countdown part of a player's.
+
+    So the right-hand column is cut off here, and what it held is returned
+    separately. Two things mark where it begins: a box that carries part of a
+    countdown, and `column_left` - where the 'Open' button was actually found for
+    this chest, which is the one landmark on the row that is measured rather than
+    guessed. From there the cut walks left over whatever is printed tight against
+    it (the countdown's label, its hourglass) and keeps everything before.
+
+    Nothing here reads the game's words. The label is in whatever language the
+    account is set to, and the only signals used are the shape of a countdown and
+    the blank space between one block of text and the next.
+    """
+    text = " ".join(line.text for line in row).strip()
+    minutes = countdown_minutes(text)
+
+    def in_right_column(index: int) -> bool:
+        line = row[index]
+        if COUNTDOWN_PART.search(line.text):
+            return True
+        return column_left is not None and line.left >= column_left
+
+    first = next((i for i in range(len(row)) if in_right_column(i)), None)
+    if first is None:
+        return text, minutes
+
+    while first > 0 and _same_block(row[first - 1], row[first]):
+        first -= 1
+
+    kept = [line.text for line in row[:first]]
+    if not kept:
+        # The whole row was the right-hand column - or it came back as a single
+        # box with the text and the countdown inside it, and there was nothing to
+        # cut by position. The words decide it instead.
+        return _before_countdown(text), minutes
+    return " ".join(kept).strip(), minutes
+
 
 def visible_chests(calibration, vision, browser) -> List[dict]:
     """
@@ -99,6 +259,8 @@ class ChestCollector(BaseModule):
     profile_label: str = "?"
     #: the picture of each chest on screen, from the last batch read
     _crops: List[Any] = []
+    #: how many minutes each chest of the last batch has left on its countdown
+    _minutes_left: List[Optional[int]] = []
 
     @property
     def name(self) -> str:
@@ -151,14 +313,21 @@ class ChestCollector(BaseModule):
         return chest, player, source, rows
 
     # ------------------------------------------------------------- collection
-    def _record(self, rows: List[str], repo: ChestRepository, crop=None) -> int:
+    def _record(self, rows: List[str], repo: ChestRepository, crop=None,
+                minutes_left: Optional[int] = None) -> int:
         """
         Writes one chest, from the rows already read for it.
+
+        `minutes_left` is the chest's own countdown, which is what dates the row:
+        see CHEST_LIFETIME_MINUTES. Where it could not be read the row is left
+        for the database to stamp, as it always was.
 
         Returns 1 recorded, 2 incomplete but still worth opening, 0 nothing
         readable - the only case that stops the tab, since carrying on would
         open chests without recording them.
         """
+        generated_at = generation_time(minutes_left)
+
         if not rows:
             # Unreadable, but not lost: the picture goes to the review queue and
             # the chest is opened like any other. Leaving it in the game only
@@ -167,7 +336,7 @@ class ChestCollector(BaseModule):
                 f"[{self.profile_label}] Nothing readable in chest area; screenshot sent to "
                 f"review queue."
             )
-            repo.insert_incomplete_chest("", "", "", self._encode(crop))
+            repo.insert_incomplete_chest("", "", "", self._encode(crop), generated_at)
             return 2
 
         chest = rows[0].strip()
@@ -175,8 +344,9 @@ class ChestCollector(BaseModule):
         source = parse_key_value_line(rows[2])[1] if len(rows) >= 3 else ""
 
         if chest and player and source:
-            if repo.insert_chest(chest, player, source):
-                logger.info(f"Chest recorded -> '{chest}' from '{player}' ({source})")
+            if repo.insert_chest(chest, player, source, generated_at):
+                logger.info(f"Chest recorded -> '{chest}' from '{player}' ({source})"
+                            f"{self._age_note(minutes_left, generated_at)}")
                 if self.vocabulary:
                     self.vocabulary.learn(chest, player, source)
                 return 1
@@ -190,8 +360,16 @@ class ChestCollector(BaseModule):
             f"[{self.profile_label}] Incomplete chest -> name='{chest}' player='{player}' "
             f"source='{source}' | read={rows}. Screenshot sent to review queue."
         )
-        repo.insert_incomplete_chest(chest, player, source, self._encode(crop))
+        repo.insert_incomplete_chest(chest, player, source, self._encode(crop), generated_at)
         return 2
+
+    @staticmethod
+    def _age_note(minutes_left: Optional[int], generated_at: Optional[datetime]) -> str:
+        """The 'generated at' half of the log line, when the countdown was read."""
+        if generated_at is None:
+            return " — countdown unreadable, dated on arrival"
+        age = min(max(CHEST_LIFETIME_MINUTES - (minutes_left or 0), 0), CHEST_LIFETIME_MINUTES)
+        return f", generated {age // 60}h{age % 60:02d} ago at {generated_at:%H:%M}"
 
     @staticmethod
     def _encode(crop) -> Optional[bytes]:
@@ -248,6 +426,7 @@ class ChestCollector(BaseModule):
         if image is None or image.size == 0:
             logger.warning(f"Empty capture for the chest panel {panel}.")
             self._crops = [None] * len(chests)
+            self._minutes_left = [None] * len(chests)
             return [[] for _ in chests]
 
         # Each chest's slice of the panel, kept for the ones that fail: it is
@@ -257,17 +436,34 @@ class ChestCollector(BaseModule):
             for top in tops
         ]
 
-        rows = self.ocr.group_rows(
+        rows = self.ocr.group_row_lines(
             self.ocr.lines_from_image(image, (panel[0], panel[1]), scale, careful=careful))
 
         # Each row belongs to the chest whose slot it falls in; anything between
         # slots goes to the nearest one rather than being thrown away.
+        # Where the panel's right-hand column starts, measured: the leftmost
+        # 'Open' button found on screen. Everything the chest itself says is
+        # printed to the left of it.
+        column_left = min((chest["button"][0] for chest in chests), default=None)
+
         grouped: List[List[str]] = [[] for _ in chests]
-        for text, centre_y in rows:
+        minutes_left: List[Optional[int]] = [None] * len(chests)
+        for row in rows:
+            text, minutes = split_row(row, column_left)
+            centre_y = row[0].center[1]
             index = next((i for i, top in enumerate(tops) if top <= centre_y < top + height), None)
             if index is None:
                 index = min(range(len(tops)), key=lambda i: abs(centre_y - (tops[i] + height / 2)))
-            grouped[index].append(text)
+            # The first countdown the chest shows is its own; a second reading in
+            # the same slot would be a stray box from the row above or below.
+            if minutes is not None and minutes_left[index] is None:
+                minutes_left[index] = minutes
+            # A row that was nothing but the countdown disappears with it, and
+            # must not be kept as an empty row: the fields are read by position.
+            if text:
+                grouped[index].append(text)
+
+        self._minutes_left = minutes_left
         return grouped
 
     def _resolve(self, rows: List[str]) -> Tuple[List[str], bool]:
@@ -350,9 +546,11 @@ class ChestCollector(BaseModule):
             # waiting for the list to settle between clicks.
             failed = False
             crops = self._crops if len(self._crops) == len(chests) else [None] * len(chests)
-            for chest, rows, crop in reversed(list(zip(chests, batch, crops))):
+            times = (self._minutes_left if len(self._minutes_left) == len(chests)
+                     else [None] * len(chests))
+            for chest, rows, crop, minutes in reversed(list(zip(chests, batch, crops, times))):
                 cancellation.check()
-                code = self._record(rows, repo, crop)
+                code = self._record(rows, repo, crop, minutes)
                 if code == 0:
                     incomplete += 1
                     failed = True

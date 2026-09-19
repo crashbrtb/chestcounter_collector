@@ -16,7 +16,7 @@ screen and configured through a graphical interface.
 
 1. Download the files to a folder (for example `C:\chestcounter`).
 2. Run `install.bat` — creates the virtual environment and installs all dependencies.
-3. Double-click `Configure.bat` (or `Configurar.bat`) and follow the steps in the **Execution** tab.
+3. Double-click `Configure.bat` and follow the steps in the **Execution** tab.
 
 If an older version's `position.cfg` exists, `install.bat` automatically imports
 database credentials from it: profiles will already appear registered, requiring
@@ -39,8 +39,9 @@ Double-click to run without needing a command prompt:
 
 | File | Description |
 |---|---|
-| **`Configure.bat`** (or `Configurar.bat`) | Opens the interface: accounts, profiles, databases, and all parameters |
-| **`Calibrate.bat`** (or `Calibrar.bat`) | Opens the calibration wizard directly |
+| **`Configure.bat`** | Opens the interface: accounts, profiles, databases, and all parameters |
+| **`Calibrate.bat`** | Opens the calibration wizard directly |
+| **`Check_Environment.bat`** | Quick diagnostic check for Python, RapidOCR, ONNXRuntime, and Tesseract |
 | `run.bat` | Collects chests. **This is what Windows Task Scheduler should call.** |
 
 The first two are shortcuts for `run.bat`, which also accepts `run.bat config`,
@@ -69,6 +70,18 @@ Logs are written directly by Python to
 `execution_logs/collector_YYYY-MM-DD.log` in UTF-8, with automatic cleanup of
 older files. Redirecting batch script output — as was done previously — caused
 character encoding issues and truncated logs if the process exited unexpectedly.
+
+### Heartbeat
+
+Every run, from `run.bat` or from the interface, writes a row to the site's
+`job_runs` table in each database it collects into: `running` when it starts,
+then `success`, `partial` (some profiles failed), `failed` or `cancelled`, with
+the chests collected, the profiles that failed and why, and the duration. The
+site's **Admin > Monitoring** page and `/api/v1/health` raise the alarm when no
+good run arrives in time — a run that found no chests still counts.
+
+A database whose site has not been updated yet (no `job_runs` table) is skipped
+silently, and a heartbeat that cannot be written never stops the collection.
 
 ---
 
@@ -167,13 +180,22 @@ moving — ensuring accounts with many profiles are fully traversed. If clicking
 the profile menu does not change the screen, the log explicitly reports this
 rather than misattributing the issue to OCR.
 
+The **Chest text** area must reach far enough right to include the **Time left**
+counter. That counter is what dates the chest: a chest appears showing
+`19 h : 59 m` and counts down, so `12 h : 40 m` left means it was generated 7h19
+ago, and that is the hour stored in `collected_at` — not the hour the collector
+read it. Without the counter inside the marked area every chest of a run is dated
+on arrival, which is what it used to do. Including it costs nothing: the counter
+and the "Open" caption are cut off the reading by where they are printed, so
+neither reaches the database.
+
 The **🧰 Test chest capture** button tests the three chest steps together, which
 is the only way they mean anything: the "Open" button is found by its picture and
 each chest's text is placed relative to the button found for it. It runs the
 collector's own detection against the live screen and draws the answer — a box
-around every button found, a box around the text area that belongs to it, and
-what was read inside each one — so a panel of four chests is confirmed before a
-run rather than after.
+around every button found, a box around the text area that belongs to it, what was
+read inside each one, and each chest's countdown with the generation time it would
+store — so a panel of four chests is confirmed before a run rather than after.
 
 **Advance automatically** also performs the step. A step that marks a button
 presses it, waits, takes a fresh capture and only then opens the next step, so

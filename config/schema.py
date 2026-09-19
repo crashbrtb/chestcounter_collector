@@ -170,8 +170,20 @@ SECTIONS: List[Section] = [
                   "1271 ms per read, 2 threads 689 ms, 4 threads 524 ms, and 8 threads back to "
                   "1269 ms as the cores contend. More is not better past 4. If the log warns that "
                   "RapidOCR ignored the setting, this box is doing nothing and reads are running "
-                  "at the package default — the key moved between package versions once already.",
+                  "at the package default — the key moved between package versions once already. "
+                  "Ignored when 'Use GPU' is on.",
                   minimum=1, maximum=32),
+            Field("use_gpu", "bool", "Use GPU (DirectML)", False,
+                  "Runs RapidOCR's detection and recognition models on the graphics card instead "
+                  "of the CPU, through DirectML — it works with any DirectX 12 GPU (NVIDIA, AMD, "
+                  "Intel) without CUDA or cuDNN to install and match. Measured on an RTX 4050 with "
+                  "the current PP-OCRv6 models: 403 ms per panel on 4 CPU threads against 103 ms "
+                  "on the GPU, same text read back both ways. Requires the 'onnxruntime-directml' "
+                  "package in place of plain 'onnxruntime' (see README) — without it this box "
+                  "does nothing and RapidOCR logs a warning, then reads on the CPU as before. Try "
+                  "'tools/benchmark_ocr.py' on each machine before turning this on in production: "
+                  "an older or integrated GPU can come out slower than the CPU, and it should be "
+                  "measured, not assumed."),
             Field("capture_scale", "float", "Capture upscale factor", 2.0,
                   "The region is rendered directly by Chrome at this scale, without interpolation. "
                   "Benchmarked: 2.0 reads identically to 3.0 and halves capture time; 1.0 makes errors.",

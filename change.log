@@ -1,7 +1,31 @@
+Next  - Optional GPU acceleration for RapidOCR, and a stale-package fix.
+  - New 'ocr.use_gpu' setting runs RapidOCR's detection and recognition models on the graphics
+    card through DirectML instead of the CPU. It works with any DirectX 12 GPU (NVIDIA/AMD/Intel)
+    on Windows 10+, with no CUDA/cuDNN version to match - only 'onnxruntime-directml' in place of
+    plain 'onnxruntime' (see requirements.txt). Off by default: measured on an RTX 4050 with the
+    current PP-OCRv6 models, 403 ms per panel on 4 CPU threads dropped to 103 ms on the GPU, same
+    text read back both ways, but the payoff depends on the GPU actually in the machine - an older
+    or integrated one can come out slower for a model this small. tools/benchmark_ocr.py measures
+    a given machine before the setting is turned on there.
+  - Found while investigating a collection-speed report: this machine's Python had
+    'rapidocr-onnxruntime' 1.4.4 installed - the OLD package (capped there, older PP-OCRv4 models) -
+    instead of the 'rapidocr>=3.0.0' requirements.txt asks for. Both work, but the project's OCR
+    tuning (thread key, TINY/hybrid notes in core/ocr.py) was measured against the new package, so
+    a machine still on the old one is not running what the code was tuned for. utils/check_env.py
+    now says which package is active and how to fix it; the OCR speed complaint itself traced to
+    the RapidOCR-first engine swap of 2.0.5 (necessary for the accuracy it bought - see that entry)
+    rather than to this, but it is worth fixing on any machine that has drifted onto the old package.
+
+Next  - Run heartbeat for the site's monitoring:
+  - Every run writes running/success/partial/failed/cancelled to the site's job_runs table in each
+    database it collects into (database/job_runs.py); older sites without the table are skipped.
+  - Fixed: a profile that failed an attempt and succeeded on the retry was counted as a failure,
+    making the run exit with code 1.
+
 2.0.6 - OCR diagnostics and fallback improvements:
   - Added clear visibility and alerts in the calibration wizard and runner preflight when RapidOCR is unavailable.
   - Improved Tesseract fallback: wide horizontal gap splitting prevents adjacent columns from merging into broken single lines.
-  - Added environment verification tool (Verificar_Ambiente.bat) to diagnose Python, RapidOCR, ONNXRuntime, VC++ Redistributable, and Tesseract.
+  - Added environment verification tool (Check_Environment.bat) to diagnose Python, RapidOCR, ONNXRuntime, VC++ Redistributable, and Tesseract.
 
 0.1   - Initial release.
 0.2   - Multiple accounts support.
@@ -84,3 +108,24 @@
   - Account fields have labels. A placeholder is not a label: it disappears as soon as
     something is typed, which left a filled-in account as four anonymous boxes. The profile
     rows got column names for the same reason.
+
+2.0.8 - Chests are dated by when the game made them, not by when they were read.
+  - `collected_at` now holds the chest's generation time, worked out from the countdown the
+    panel prints beside it: a chest is born showing '19 h : 59 m' and falls from there, so
+    '12 h : 40 m' left means it was generated 7h19 ago. Before, every chest in a run carried
+    the minute the collector happened to reach it - a chest made at 10:51 was stored at 18:11.
+    A run takes minutes but the chests in it are up to twenty hours old, and with the game's
+    day rolling over at 14:00 that moved whole mornings of chests into the next day's count.
+  - Where the countdown cannot be read the row is left for the database to stamp on arrival,
+    as before, and the log line says so for that chest. Databases without the column are
+    unaffected: the column is asked for once and skipped where it does not exist.
+  - The panel's right-hand column no longer leaks into the text. The chest area now spans the
+    countdown and the 'Open' button, so the reading came back as 'From: Night King Time left:
+    12h:44m' and 'Source: Epic Chimera squad Open' - the button's caption was being stored as
+    part of the source. The column is cut off by where things are printed, not by what they
+    say: a box carrying part of a countdown, or one starting where the 'Open' button was
+    found, begins the column, and whatever is pressed tight against it (the label, the
+    hourglass) goes with it. No wording in any language is matched.
+  - "Test chest capture" in the calibration wizard reads exactly as the run does and shows
+    each chest's countdown and the generation time it would store, so a calibration that
+    cannot read the countdown is visible before a run rather than after.
