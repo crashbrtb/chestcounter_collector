@@ -1,3 +1,12 @@
+Next  - A frozen game in Chrome no longer sinks every run after it.
+  - The game sometimes freezes in the browser until F5. The run failed, left that Chrome open,
+    and every later run found it, attached to the same frozen tab and failed again, in a loop.
+  - A browser found already open is now checked before it is used (the tab must run JavaScript
+    and render a frame); one that does not answer is closed - even though this run did not
+    open it - and launched fresh.
+  - When no profile of an account can be collected, the browser is closed, reopened and the
+    account tried once more. New setting 'execution.restart_browser_on_failure' (on by default).
+
 Next  - Optional GPU acceleration for RapidOCR, and a stale-package fix.
   - New 'ocr.use_gpu' setting runs RapidOCR's detection and recognition models on the graphics
     card through DirectML instead of the CPU. It works with any DirectX 12 GPU (NVIDIA/AMD/Intel)
