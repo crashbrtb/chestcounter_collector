@@ -170,14 +170,126 @@ class Browser:
         raise BrowserError(f"The browser did not respond on CDP port {self.port} within 30s.")
 
     def start(self) -> bool:
-        """Reuses a browser that is already listening, otherwise launches one."""
+        """
+        Reuses a browser that is already listening, otherwise launches one.
+
+        A browser left open by an earlier run is checked before it is trusted:
+        the game sometimes freezes until F5, and a run that attached to that tab
+        failed on every step - and so did every run after it, because each one
+        found the same frozen Chrome and attached to it again. One that does not
+        answer is closed and launched fresh.
+        """
         if self.reuse_existing and self.is_cdp_ready():
             logger.info(f"Reusing the browser already listening on CDP port {self.port}.")
-        else:
-            self.launch()
+            try:
+                if self.connect() and self.is_responsive():
+                    return True
+            except BrowserError as exc:
+                logger.debug(f"Reused browser: {exc}")
+            logger.warning("The browser that was already open is not responding; restarting it.")
+            return self.restart()
+
+        self.launch()
         if not self.connect():
             raise BrowserError("Could not connect to the game tab via CDP.")
         return True
+
+    def is_responsive(self, timeout: float = 10.0) -> bool:
+        """True when the game tab still runs JavaScript and still renders a frame."""
+        try:
+            result = self.send("Runtime.evaluate",
+                               {"expression": "1+1", "returnByValue": True}, timeout=timeout)
+            if result.get("result", {}).get("value") != 2:
+                return False
+            self.send("Page.captureScreenshot", {
+                "format": "jpeg", "quality": 10,
+                "clip": {"x": 0, "y": 0, "width": 8, "height": 8, "scale": 1},
+            }, timeout=timeout)
+            return True
+        except BrowserError as exc:
+            logger.debug(f"Responsiveness check failed: {exc}")
+            return False
+
+    def restart(self) -> bool:
+        """
+        Closes the browser - whoever opened it - and launches a fresh one.
+
+        The equivalent of the F5 a person would press on a frozen game, but
+        stronger: a new browser process also clears a hung renderer that a
+        reload would not reach.
+        """
+        logger.info("Restarting the browser...")
+        self.kill()
+        time.sleep(1.5)
+        self.launch()
+        if not self.connect():
+            raise BrowserError("Could not connect to the game tab via CDP after restarting the browser.")
+        return True
+
+    def kill(self):
+        """
+        Closes the browser on our CDP port even when this run did not open it.
+
+        Asked politely first (`Browser.close` on the browser's own socket, which
+        answers even when the game tab is hung), then by process: ours if we
+        launched it, otherwise every process started on our profile folder.
+        """
+        self.disconnect()
+        if self.is_cdp_ready():
+            try:
+                url = self._http("/json/version").json().get("webSocketDebuggerUrl")
+                if url and websocket is not None:
+                    browser_ws = websocket.create_connection(url, timeout=5, suppress_origin=True)
+                    try:
+                        browser_ws.send(json.dumps({"id": 1, "method": "Browser.close"}))
+                    finally:
+                        browser_ws.close()
+            except Exception as exc:
+                logger.debug(f"Browser.close: {exc}")
+
+        if not self._wait_cdp_gone(15):
+            if self._process and self._process.poll() is None:
+                try:
+                    self._process.kill()
+                except Exception:
+                    pass
+            self._kill_profile_processes()
+            if not self._wait_cdp_gone(10):
+                raise BrowserError(f"Could not close the browser on CDP port {self.port}.")
+
+        self._process = None
+        self._launched_by_us = False
+        self.tab_id = None
+        logger.info("Browser closed.")
+
+    def _wait_cdp_gone(self, timeout: float) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if not self.is_cdp_ready():
+                return True
+            time.sleep(0.5)
+        return not self.is_cdp_ready()
+
+    def _kill_profile_processes(self):
+        """Force-kills every process whose command line names our profile folder."""
+        if os.name != "nt":
+            return
+        # The same spelling launch() put on the command line.
+        folder = f"--user-data-dir={self.user_data_dir}".replace("'", "''")
+        script = (
+            f"$d = '{folder}'; "
+            "Get-CimInstance Win32_Process | "
+            "Where-Object { $_.CommandLine -and $_.CommandLine.Contains($d) } | "
+            "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
+        )
+        try:
+            subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception as exc:
+            logger.debug(f"Killing browser processes: {exc}")
 
     def switch_profile(self, user_data_dir: str) -> bool:
         """

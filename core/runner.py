@@ -168,24 +168,65 @@ class CollectorRunner:
             logger.info("=" * 60)
             logger.info(f"ACCOUNT {index}/{len(accounts)}: '{account.name}'")
             logger.info("=" * 60)
-            try:
-                self._run_account(account, only_profile)
-            except Cancelled:
-                raise
-            except SessionError as exc:
-                self._record_failure(account, None, str(exc))
-                if self.execution.get("stop_on_error"):
-                    raise
-            except Exception as exc:  # noqa: BLE001 - one account must not sink the run
-                logger.exception(f"Unexpected failure on account '{account.name}': {exc}")
-                self._record_failure(account, None, f"unexpected error: {exc}")
-                self._save_error_screenshot(f"account_{account.name}")
-                if self.execution.get("stop_on_error"):
-                    raise
+            self._run_account_with_restart(account, only_profile)
 
         return self._summary(started)
 
-    def _run_account(self, account: AccountConfig, only_profile: Optional[str]):
+    def _run_account_with_restart(self, account: AccountConfig, only_profile: Optional[str]):
+        """
+        Runs the account; if nothing at all could be collected, restarts the
+        browser and runs it once more.
+
+        An account where every profile fails is almost always a game that froze
+        in the browser - the state a person clears with F5. Leaving it there
+        failed this run and every later one, since each found the same frozen
+        Chrome. A fresh browser is what gets the run going again.
+        """
+        restart = bool(self.execution.get("restart_browser_on_failure", True))
+        attempts = 2 if restart else 1
+        for attempt in range(1, attempts + 1):
+            last = attempt == attempts
+            try:
+                if self._run_account(account, only_profile):
+                    return
+                if last:
+                    return       # each profile already recorded its own failure
+                reason = "no profile of the account could be collected"
+            except Cancelled:
+                raise
+            except SessionError as exc:
+                if last:
+                    self._record_failure(account, None, str(exc))
+                    if self.execution.get("stop_on_error"):
+                        raise
+                    return
+                reason = str(exc)
+            except Exception as exc:  # noqa: BLE001 - one account must not sink the run
+                logger.exception(f"Unexpected failure on account '{account.name}': {exc}")
+                self._save_error_screenshot(f"account_{account.name}")
+                if last:
+                    self._record_failure(account, None, f"unexpected error: {exc}")
+                    if self.execution.get("stop_on_error"):
+                        raise
+                    return
+                reason = f"unexpected error: {exc}"
+
+            logger.warning(
+                f"Account '{account.name}' failed ({reason}). The game may be frozen in the "
+                f"browser; closing it and trying the account again in a fresh one."
+            )
+            try:
+                self.ctx.browser.restart()
+                self.ctx.sync_viewport()
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"Could not restart the browser: {exc}")
+                self._record_failure(account, None, f"{reason}; browser restart failed: {exc}")
+                if self.execution.get("stop_on_error"):
+                    raise
+                return
+
+    def _run_account(self, account: AccountConfig, only_profile: Optional[str]) -> bool:
+        """Collects the account's profiles. False when none of those tried succeeded."""
         # An account with a browser profile of its own gets the browser restarted
         # on that folder, so it arrives at a session the game has already verified.
         wanted_profile = self.ctx.config.browser_profile_for(account)
@@ -213,6 +254,7 @@ class CollectorRunner:
         # names apart by competition instead of by threshold.
         siblings = [p.name for p in account.profiles if p.name]
 
+        tried = succeeded = 0
         for profile in profiles:
             if not profile.has_database:
                 logger.warning(
@@ -222,13 +264,16 @@ class CollectorRunner:
                 self._record_failure(account, profile, "profile has no database")
                 continue
             cancellation.check()
-            self._run_profile(account, profile, siblings)
+            tried += 1
+            if self._run_profile(account, profile, siblings):
+                succeeded += 1
             cancellation.sleep(float(self.timing.get("between_profiles_wait", 3.0)))
 
         if self.ctx.login.enabled:
             self.ctx.login.end_session()
+        return succeeded > 0 or tried == 0
 
-    def _run_profile(self, account: AccountConfig, profile: ProfileConfig, siblings: List[str]):
+    def _run_profile(self, account: AccountConfig, profile: ProfileConfig, siblings: List[str]) -> bool:
         attempts = int(self.execution.get("retries_per_profile", 2))
         for attempt in range(1, attempts + 1):
             logger.info(f"--- Profile '{profile.label}' (attempt {attempt}/{attempts}) ---")
@@ -240,7 +285,7 @@ class CollectorRunner:
                 result.setdefault("account", account.name)
                 self.results.append(result)
                 if result.get("success"):
-                    return
+                    return True
                 logger.warning(f"Collection for '{profile.label}' reported: {result.get('reason', 'failure')}")
             except Cancelled:
                 raise
@@ -255,6 +300,7 @@ class CollectorRunner:
                 self.ctx.game_state.prepare_board()
 
         self._record_failure(account, profile, "all attempts failed")
+        return False
 
     # ---------------------------------------------------------------- results
     def _record_failure(self, account: AccountConfig, profile: Optional[ProfileConfig], reason: str):

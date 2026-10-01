@@ -57,6 +57,9 @@ SECTIONS: List[Section] = [
             Field("retries_per_profile", "int", "Retries per profile", 2,
                   "How many times a profile is retried before being considered failed.",
                   minimum=1, maximum=5),
+            Field("restart_browser_on_failure", "bool", "Restart browser when an account fails", True,
+                  "When no profile of an account can be collected (usually the game froze in Chrome "
+                  "and needs F5), closes the browser, opens a fresh one and tries the account once more."),
             Field("log_level", "choice", "Log level", "INFO",
                   "DEBUG logs every OCR reading and every click.",
                   choices=("DEBUG", "INFO", "WARNING", "ERROR")),
