@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from config.settings import ConfigManager
+from modules.registry import calibration_scope, step_groups
 from utils.logger import logger
 
 from .browser import Browser
@@ -88,7 +89,8 @@ class RunContext:
 
 def build_context(config: Optional[ConfigManager] = None, calibration: Optional[Calibration] = None) -> RunContext:
     config = config or ConfigManager()
-    calibration = calibration or Calibration()
+    calibration = calibration or Calibration(step_groups())
+    calibration.required = calibration_scope(config)
 
     browser = Browser(config.section("browser"), config.user_data_dir())
     ocr = OCREngine(browser, config.section("ocr"))

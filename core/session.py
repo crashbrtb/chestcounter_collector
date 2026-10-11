@@ -37,6 +37,7 @@ from config.settings import AccountConfig, ProfileConfig
 from core.vision import changed_fraction
 from utils.cancel import cancellation
 from utils.logger import logger
+from utils.text_utils import contains_name
 
 # Shared helpers for the page-side scripts below.
 #
@@ -468,6 +469,13 @@ class ProfileSwitcher:
         The banner is identified against every profile of the account, not
         checked against this one alone: with names as close as 'Crash BR' and
         'Cash BR', a yes/no test says yes to both.
+
+        Winning that competition is not enough either: it only covers the
+        profiles that are configured. With 'Cash BR' alone in the configuration,
+        a banner reading 'Crash BR' had no rival, won on similarity, and its
+        chests were recorded as Cash BR's. So the name must also be spelled out
+        in the banner - a misread costs a trip through the profile menu, a wrong
+        yes costs a database.
         """
         area = self.calibration.region("profile_name_display_area")
         if not area:
@@ -475,8 +483,16 @@ class ProfileSwitcher:
             return False
 
         candidates = list(dict.fromkeys([profile_name, *[s for s in siblings if s]]))
-        winner, _text = self.ocr.identify(area, candidates)
-        return winner == profile_name
+        winner, text = self.ocr.identify(area, candidates)
+        if winner != profile_name:
+            return False
+        if not contains_name(profile_name, text):
+            logger.warning(
+                f"The banner reads '{text}', which is close to '{profile_name}' but not the same name: "
+                f"treating it as a different profile."
+            )
+            return False
+        return True
 
     def switch_to(self, profile: ProfileConfig, siblings: Sequence[str] = ()) -> bool:
         """
@@ -523,20 +539,37 @@ class ProfileSwitcher:
             return False
         logger.info(f"The profile menu click changed {opened:.0%} of the screen.")
 
+        # The whole list is searched for the name spelled out before a merely
+        # similar line is accepted: a near-twin in the first view must not be
+        # clicked while the real profile sits below the fold. The looser pass
+        # is for a misread letter, and the banner check after the switch still
+        # has the last word.
+        for exact in (True, False):
+            if self._pick_from_list(profile, competitors, list_area, exact):
+                return self._confirm_switch(profile, siblings)
+
+        logger.error(f"Profile '{profile.name}' was not found in the profile list.")
+        self.browser.press_key("Escape", delay=0.5)
+        return False
+
+    def _pick_from_list(self, profile: ProfileConfig, competitors: Sequence[str],
+                        list_area: Tuple[int, int, int, int], exact: bool) -> bool:
+        """Scrolls the open profile list from the top and clicks `profile`; False when it is not there."""
         center_x = list_area[0] + list_area[2] // 2
         center_y = list_area[1] + list_area[3] // 2
         self.browser.scroll_to_top(center_x, center_y)
         cancellation.sleep(0.6)
 
+        how = "" if exact else ", accepting a close reading"
         # Scroll until the list stops changing instead of a fixed two views: the
         # number of profiles is whatever the account has, and a fixed number of
         # looks either misses the last ones or wastes time on a short list.
         for view in range(1, MAX_LIST_VIEWS + 1):
-            logger.info(f"Looking for profile '{profile.name}' in the list (view {view})...")
-            found = self.ocr.find_text(list_area, profile.name, competitors=competitors)
+            logger.info(f"Looking for profile '{profile.name}' in the list (view {view}{how})...")
+            found = self.ocr.find_text(list_area, profile.name, competitors=competitors, exact=exact)
             if found:
                 self.browser.click(found.center[0], found.center[1], delay=1.5)
-                return self._confirm_switch(profile, siblings)
+                return True
 
             list_before = self.browser.capture(list_area, scale=1.0)
             self.browser.scroll_down(center_x, center_y)
@@ -544,9 +577,6 @@ class ProfileSwitcher:
             if changed_fraction(list_before, self.browser.capture(list_area, scale=1.0)) < 0.01:
                 logger.info("The list did not move: this is the end of it.")
                 break
-
-        logger.error(f"Profile '{profile.name}' was not found in the profile list.")
-        self.browser.press_key("Escape", delay=0.5)
         return False
 
     def _confirm_switch(self, profile: ProfileConfig, siblings: Sequence[str] = ()) -> bool:

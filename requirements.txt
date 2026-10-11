@@ -23,6 +23,10 @@ pytesseract>=0.3.13
 websocket-client>=1.7.0
 requests>=2.31.0
 
+# --- Tournament rankings module ----------------------------------------------
+# The game's traffic is read as it arrives; some of it comes zstd-compressed.
+zstandard>=0.22.0
+
 # --- Image -------------------------------------------------------------------
 opencv-python>=4.8.0
 numpy>=1.24.0

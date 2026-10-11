@@ -2,15 +2,19 @@
 Total Battle Chest Collector - entry point.
 
 Started with no arguments it does what the Windows Task Scheduler needs: read
-config/config.json, run the collection, write the log, and exit with a status
-code the scheduler can act on (0 done, 1 failed, 2 misconfigured).
+config/config.json, run every enabled module that is due (the chests each time,
+the tournament rankings once a day - see the Modules tab), write the log, and
+exit with a status code the scheduler can act on (0 done, 1 failed,
+2 misconfigured).
 
-    main.py                 collect, using config/config.json
+    main.py                 run the enabled modules, using config/config.json
     main.py --gui           open the configuration and calibration interface
     main.py --calibrate     open the calibration wizard directly
     main.py --check         validate configuration and calibration, collect nothing
     main.py --account NAME  restrict the run to one account
     main.py --profile NAME  restrict the run to one profile
+    main.py --module KEY    run only this module (chests, members, events); may be repeated
+    main.py --force         ignore the schedule: run once-a-day modules again
 """
 
 import argparse
@@ -40,6 +44,10 @@ def parse_arguments():
     parser.add_argument("--check", action="store_true", help="validate configuration and calibration only")
     parser.add_argument("--account", help="run only this account")
     parser.add_argument("--profile", help="run only this profile")
+    parser.add_argument("--module", action="append", metavar="KEY",
+                        help="run only this module (may be repeated)")
+    parser.add_argument("--force", action="store_true",
+                        help="ignore the schedule (run once-a-day modules again)")
     parser.add_argument("--keep-open", action="store_true", help="do not close the browser when finished")
     return parser.parse_args()
 
@@ -99,10 +107,10 @@ def main() -> int:
         return EXIT_OK
 
     from core.context import build_context
-    from core.runner import CollectorRunner, RunnerError
+    from core.runner import ModuleRunner, RunnerError
 
     context = build_context(config)
-    runner = CollectorRunner(context)
+    runner = ModuleRunner(context)
 
     if args.check:
         problems = runner.preflight()
@@ -113,30 +121,16 @@ def main() -> int:
         logger.info("Configuration and calibration are complete.")
         return EXIT_OK
 
-    module = config.get("execution", "module", "chests")
-    logger.info(f"Starting Total Battle Chest Collector (module: {module})")
+    titles = ", ".join(module.title for module in runner.modules) or "none"
+    logger.info(f"Starting Total Battle Chest Collector (enabled modules: {titles})")
 
     summary = None
     cancellation.reset()
     escape_watcher.start()
     logger.info("Hold ESC for a moment to cancel execution.")
     try:
-        if module in ("chests", "all"):
-            summary = runner.run(only_account=args.account, only_profile=args.profile)
-
-        # The journal and chat modules are still placeholders waiting on
-        # calibration steps of their own; they say so rather than acting blind.
-        if module in ("journal", "all"):
-            from modules.journal_parser import JournalParser
-
-            context.start_browser()
-            logger.info(JournalParser(context).run().get("reason", "Journal module executed"))
-
-        if module in ("chat", "all"):
-            from modules.chat_automator import ChatAutomator
-
-            context.start_browser()
-            logger.info(ChatAutomator(context).run().get("reason", "Chat module executed"))
+        summary = runner.run(only_account=args.account, only_profile=args.profile,
+                             only_modules=args.module, force=args.force)
     except Cancelled as exc:
         logger.warning(f"Execution cancelled ({exc}). Already collected chests remain saved.")
         return EXIT_CANCELLED

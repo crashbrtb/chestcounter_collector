@@ -4,9 +4,9 @@ REM  Total Battle Chest Collector - single entry point
 REM ==============================================================================
 REM
 REM  This is the only file Windows Task Scheduler needs to call.
-REM  It does not hold any configuration: everything (accounts, profiles, timings,
-REM  browser, OCR, log level and retention) is in config\config.json and is edited
-REM  via the graphical interface -- run.bat config
+REM  It does not hold any configuration: everything (which modules run and when,
+REM  accounts, profiles, timings, browser, OCR, log level and retention) is in
+REM  config\config.json and is edited via the graphical interface -- run.bat config
 REM
 REM  Logging is NOT redirected from here. Python writes directly to
 REM  execution_logs\collector_YYYY-MM-DD.log in UTF-8, cleans up older logs
@@ -14,13 +14,15 @@ REM  automatically, and records in-process errors. Redirecting batch output
 REM  corrupted unicode characters and truncated logs if the process died.
 REM
 REM  Usage:
-REM      run.bat                 collects chests (what Task Scheduler should call)
+REM      run.bat                 runs every enabled module that is due: the chests
+REM                              each time, the tournament rankings once a day
+REM                              (what Task Scheduler should call)
 REM      run.bat config          opens the configuration interface
 REM      run.bat calibrate       opens the calibration wizard directly
 REM      run.bat check           validates configuration and calibration only
 REM
 REM  Exit codes (seen in Task Scheduler's "Last Run Result"):
-REM      0 = all collected    1 = failure    2 = configuration/calibration issue
+REM      0 = all done         1 = failure    2 = configuration/calibration issue
 REM      3 = cancelled
 REM ==============================================================================
 

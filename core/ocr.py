@@ -99,7 +99,7 @@ except Exception as _exc_v3:
 HAS_RAPIDOCR = bool(RAPIDOCR_API)
 
 from utils.logger import logger
-from utils.text_utils import best_match, clean_ocr_text, match_score, normalize_name
+from utils.text_utils import best_match, clean_ocr_text, contains_name, match_score, normalize_name
 
 TESSERACT_PATHS = [
     r"C:\Program Files\Tesseract-OCR\tesseract.exe",
@@ -358,6 +358,25 @@ class TesseractBackend:
         if gray.mean() < 128:
             gray = cv2.bitwise_not(gray)
         return gray
+
+    def plain_text(self, image: np.ndarray, lang: str = "", single_line: bool = False) -> str:
+        """
+        The picture's text as one string, without boxes or confidences.
+
+        For a sentence rather than a panel: a line of title read whole keeps its
+        spaces and its apostrophes, which is what whoever parses it relies on.
+        `lang` is used when that language is installed; the configured one otherwise.
+        """
+        self._configure()
+        try:
+            if lang and lang != self.lang and lang not in pytesseract.get_languages(config=""):
+                lang = ""
+            text = pytesseract.image_to_string(self._prepare(image), lang=lang or self.lang,
+                                               config="--psm 7 --oem 1" if single_line else self.CONFIG)
+        except Exception as exc:
+            logger.error(f"Tesseract failed: {exc}")
+            return ""
+        return " ".join(text.split())
 
     def read(self, image: np.ndarray, **_) -> List[Dict[str, Any]]:
         self._configure()
@@ -801,12 +820,29 @@ class OCREngine:
     def read_text(self, region: Tuple[int, int, int, int], scale: Optional[float] = None) -> str:
         return "\n".join(self.read_rows(region, scale))
 
+    def image_text(self, image, single_line: bool = False, lang: str = "") -> str:
+        """
+        A sentence off a picture already in hand, as one string.
+
+        Tesseract reads it when it is installed, whatever engine the panels use:
+        it keeps the spaces between words, and RapidOCR on its own glues them
+        ('YourClanmates'resultsin'). Without Tesseract the engine in use reads
+        it, rows joined top to bottom.
+        """
+        if image is None or getattr(image, "size", 0) == 0:
+            return ""
+        if self._tesseract.available()[0]:
+            return self._tesseract.plain_text(image, lang, single_line)
+        rows = self.group_rows(self.lines_from_image(image, (0, 0), 1.0))
+        return " ".join(text for text, _y in rows)
+
     def find_text(
         self,
         region: Tuple[int, int, int, int],
         wanted: str,
         competitors: Sequence[str] = (),
         scale: Optional[float] = None,
+        exact: bool = False,
     ) -> Optional[TextLine]:
         """
         Where to click to hit `wanted` inside the region.
@@ -815,12 +851,18 @@ class OCREngine:
         list - the account's other profiles. A line is only accepted when
         `wanted` beats all of them on that line, which is what keeps two similar
         profile names apart without either one being written into the code.
+
+        `exact` also demands the name spelled out on the line: competitors only
+        cover the names the configuration knows about, and the list on screen
+        may hold a near-twin it has never heard of.
         """
         names = [wanted, *[name for name in competitors if name and name != wanted]]
 
         scored = []
         for line in self.read_lines(region, scale):
             if best_match(line.text, names, self.match_threshold) != wanted:
+                continue
+            if exact and not contains_name(wanted, line.text):
                 continue
             scored.append((match_score(wanted, line.text), -len(line.text), line))
 

@@ -8,9 +8,12 @@ guessed from pixels alone when it can be recognised against that list.
 
 What recognition is allowed to do
 ---------------------------------
-Only two things, and neither is a guess:
+Only three things, and none is a guess:
 
 * apply a correction a person already made, from `player_name_mappings`;
+* place a player's name on the one clan member it can be, when the game's own
+  member list is in the database and recent (see `Roster`) - and leave it as
+  read when the list says it could be two;
 * settle a difference of formatting - spacing, punctuation, case - against a
   spelling already known: `AncientWarrior'sChest` is `Ancient Warrior's Chest`.
 
@@ -31,11 +34,78 @@ Speed: a chest whose three fields are all already known needs no second opinion,
 so the slower engine is spent only on something genuinely unfamiliar.
 """
 
+import json
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Dict, List, Optional, Tuple
 
 from utils.logger import logger
-from utils.text_utils import alphanumeric_key
+from utils.text_utils import alphanumeric_key, ocr_key
+
+# How old the clan's member list may be and still decide whose chest it is. The
+# members module reads it once a day; two hours over that covers a run that
+# started late. Past it, someone may have joined under a name the list has not
+# seen, and the readings are matched the way they were before the list existed.
+ROSTER_MAX_AGE_HOURS = 26
+
+# The job under which the site remembers each member list it applied.
+MEMBER_LIST_JOB = "member_list"
+
+# Below this many characters a key says too little to name anyone.
+MIN_ROSTER_KEY = 3
+
+
+@dataclass
+class Roster:
+    """
+    The clan as the game lists it, used to place a reading on one of its members.
+
+    A clan chest can only come from someone in the clan, so the list of active
+    members is everyone a reading can be. That turns "is this name close enough?"
+    into a question with an answer: a reading whose key (`ocr_key`) belongs to
+    exactly one member is that member, whatever the screen did to the spelling -
+    `HeStla BR` is `HeStIa BR`, `DRIKA BR` is the member whose name ends in a
+    letter no engine writes.
+
+    The same list says when that would be a guess. Two members whose names share
+    a key (`Alok BR` and `ALOK BR` are two people) cannot be told apart by it:
+    a reading spelt exactly like one of them is that one, and any other reading
+    with their key is left for a person - recorded as it was read, never handed
+    to one of the two.
+    """
+
+    names: List[str] = field(default_factory=list)
+    age_hours: Optional[float] = None
+    _exact: set = field(default_factory=set)
+    _by_key: Dict[str, List[str]] = field(default_factory=dict)
+
+    def __post_init__(self):
+        self._exact = set(self.names)
+        self._by_key = {}
+        for name in self.names:
+            key = ocr_key(name)
+            if len(key) >= MIN_ROSTER_KEY and name not in self._by_key.setdefault(key, []):
+                self._by_key[key].append(name)
+
+    @property
+    def twins(self) -> List[List[str]]:
+        """Members a reading cannot tell apart, group by group."""
+        return [names for names in self._by_key.values() if len(names) > 1]
+
+    def resolve(self, reading: str) -> Tuple[Optional[str], str]:
+        """
+        (member, 'member') when the reading is one member and no other;
+        (None, 'ambiguous') when it could be more than one; (None, '') when the
+        list has nobody like it.
+        """
+        reading = (reading or "").strip()
+        if reading in self._exact:
+            return reading, "member"
+        candidates = self._by_key.get(ocr_key(reading), [])
+        if len(candidates) == 1:
+            return candidates[0], "member"
+        return (None, "ambiguous") if candidates else (None, "")
+
 
 @dataclass
 class KnownNames:
@@ -173,6 +243,8 @@ class Vocabulary:
     sources: KnownNames
     #: exact OCR text -> name a person chose for it
     mappings: Dict[str, str] = field(default_factory=dict)
+    #: the clan's member list, when the database has one read recently enough
+    roster: Optional[Roster] = None
 
     @property
     def is_useful(self) -> bool:
@@ -181,12 +253,21 @@ class Vocabulary:
 
     def resolve_player(self, reading: str) -> Tuple[Optional[str], str]:
         """
-        (name, how it was decided) - 'mapping', 'known', or ('', 'unknown').
+        (name, how it was decided) - 'mapping', 'member', 'known', or
+        (None, 'ambiguous' | 'unknown').
 
-        The mapping table is consulted first and wins outright.
+        The mapping table is consulted first and wins outright. Then the clan's
+        member list, when there is a recent one: it places the reading on one
+        member, or says it could be more than one - and then nothing older is
+        asked, because the history would pick one of them by habit. Whoever the
+        list does not know is looked for the old way.
         """
         if reading in self.mappings:
             return self.mappings[reading], "mapping"
+        if self.roster is not None:
+            member, how = self.roster.resolve(reading)
+            if member or how == "ambiguous":
+                return member, how
         found = self.players.resolve(reading)
         return (found, "known") if found else (None, "unknown")
 
@@ -211,6 +292,57 @@ class Vocabulary:
                 f"{len(self.sources.names)} sources "
                 f"({len(self.sources.authoritative)} authoritative), "
                 f"{len(self.mappings)} manual mappings")
+
+
+def load_roster(query_rows) -> Optional[Roster]:
+    """
+    The clan's active members, if the site applied a member list recently enough.
+
+    The site notes each list it applies as a `member_list` run, with the moment
+    the list was read from the game. Its age is measured against the database's
+    own clock, as the heartbeat is (database/job_runs.py): this computer's clock
+    and timezone are not the site's.
+    """
+    rows = query_rows(
+        f"SELECT summary, UTC_TIMESTAMP() FROM job_runs WHERE job = '{MEMBER_LIST_JOB}' "
+        f"AND status = 'success' ORDER BY finished_at DESC, id DESC LIMIT 1"
+    )
+    if not rows:
+        logger.info("No member list from the game in this database yet: player names are matched "
+                    "against what was collected before.")
+        return None
+
+    summary, now = rows[0][0], rows[0][1]
+    try:
+        if isinstance(summary, (bytes, bytearray)):
+            summary = summary.decode("utf-8")
+        if isinstance(summary, str):
+            summary = json.loads(summary)
+        read_at = datetime.strptime(str(summary["read_at"]), "%Y-%m-%dT%H:%M:%SZ")
+        age_hours = (now - read_at).total_seconds() / 3600
+    except (KeyError, TypeError, ValueError) as exc:
+        logger.debug(f"Member list run could not be read: {exc}")
+        return None
+
+    if age_hours > ROSTER_MAX_AGE_HOURS:
+        logger.warning(f"The clan's member list was read {age_hours:.0f} h ago, more than the "
+                       f"{ROSTER_MAX_AGE_HOURS} h it is trusted for: player names are matched against what "
+                       f"was collected before, until the members module reads the list again.")
+        return None
+
+    names = [str(name).strip() for (name,) in query_rows("SELECT player FROM members WHERE active = 1") if name]
+    if not names:
+        return None
+
+    roster = Roster(names, age_hours)
+    logger.info(f"Member list read {max(age_hours, 0):.1f} h ago: readings are placed on its "
+                f"{len(names)} active members.")
+    # Said here so a chest recorded as read can be explained from the log; telling
+    # the clan about players who share a name is the site's job.
+    for twins in roster.twins:
+        logger.info(f"Members a reading cannot tell apart: {' / '.join(twins)}. A chest is given to one of "
+                    f"them only when the name is read exactly as theirs; otherwise it is recorded as read.")
+    return roster
 
 
 def load_vocabulary(connection) -> Vocabulary:
@@ -267,9 +399,12 @@ def load_vocabulary(connection) -> Vocabulary:
         mappings = {raw: correct for raw, correct
                     in query_rows("SELECT ocr_text, correct_name FROM player_name_mappings")
                     if raw and correct}
+
+        # --- and the clan as the game lists it, when that is known and recent ---
+        roster = load_roster(query_rows)
     finally:
         cursor.close()
 
-    vocabulary = Vocabulary(players, chests, sources, mappings)
+    vocabulary = Vocabulary(players, chests, sources, mappings, roster)
     logger.info(f"Vocabulary loaded from database: {vocabulary.summary()}")
     return vocabulary

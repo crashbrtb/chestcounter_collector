@@ -28,7 +28,7 @@ accuracy instead of breaking the run outright.
 import json
 import os
 import time
-from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 try:
     import cv2
@@ -75,13 +75,18 @@ class Step(NamedTuple):
         return self.type == "region"
 
 
-# The order is the order of a real collection run: each step leaves the game in
-# the state the next one expects, so calibrating means playing through it once.
-STEPS: List[Step] = [
-    # The two store steps come first because the store is what covers everything
-    # else. The game opens it by itself, and with it on top the profile menu and
-    # the clan buttons underneath cannot be reached - so calibrating the marker
-    # and its X, and closing it, is what clears the screen for all the rest.
+# The steps every module depends on: what is in the way of the board, and how to
+# get to a profile. They are calibrated once and come first because the store is
+# what covers everything else. The game opens it by itself, and with it on top
+# the profile menu and every other button underneath cannot be reached - so
+# calibrating the marker and its X, and closing it, is what clears the screen
+# for all the rest.
+#
+# Each module adds the steps of its own screens after these (see
+# modules/registry.py). A step is known by its name: a module that needs a
+# point another one already marks declares the same name and it is calibrated
+# once, for both.
+SHARED_STEPS: List[Step] = [
     Step("store_marker", "region", "Store open (optional)",
          "Leave the in-game STORE open and mark a fixed part of it (such as the title).\n"
          "This is how the collector knows the store is blocking the screen.\n"
@@ -105,39 +110,40 @@ STEPS: List[Step] = [
     Step("profile_name_display_area", "area", "Active profile name",
          "Once inside a profile, mark the area where the game displays the ACTIVE profile name.\n"
          "This verifies that switching succeeded."),
-    Step("clan_button", "click", "Clan button",
-         "Click the button that opens the CLAN menu.",
-         acts=True),
-    Step("gift_button", "click", "Gifts button",
-         "Inside the clan menu, click GIFTS.",
-         acts=True),
-    Step("gifts_tab", "click", "Gifts tab",
-         "Click the standard gifts tab.",
-         acts=True),
-    Step("triumphal_gifts_tab", "click", "Triumphal gifts tab",
-         "Click the triumphal gifts tab.",
-         acts=True),
-    Step("chest_area", "area", "Chest text",
-         "Mark the area where the CHEST NAME, player, and source appear.\n"
-         "Include the TIME LEFT counter on the right: it is what dates the chest.\n"
-         "Mark the FIRST chest of the list only — the others are derived from it.\n"
-         "This text is saved to the database — leave some margin."),
-    Step("open_button_area", "area", "Search area for 'Open' button",
-         "Mark the area where the OPEN chest button appears, for that same first chest.\n"
-         "Can be generous: the button is located by image matching inside it."),
-    Step("open_button", "region", "Open button",
-         "Mark only the button to open the chest, tightly.\n"
-         "This image is the reference searched for each chest.\n"
-         "It is never clicked automatically: that would open a chest nothing records."),
 ]
 
-STEPS_BY_NAME = {step.name: step for step in STEPS}
+# Without these no profile can be reached, whatever module is going to run on
+# it: the ones a run refuses to start without. (The wizard asks for every step
+# that is not optional; a run is less strict, as it always was.)
+SHARED_REQUIRED_STEPS = ("profile_menu_button", "profiles_list_area", "profile_name_display_area")
+
+
+class StepGroup(NamedTuple):
+    """The steps of one part of the game, under the heading the wizard shows them with."""
+
+    key: str             # "shared", or the key of the module they belong to
+    title: str
+    steps: List[Step]
+
+
+SHARED_GROUP = StepGroup("shared", "Common to every module", SHARED_STEPS)
 
 
 class Calibration:
     """The calibrated positions, rescaled to whatever viewport the run happens to have."""
 
-    def __init__(self, path: str = CALIBRATION_FILE_PATH, refs_dir: str = CALIBRATION_REFS_DIR):
+    def __init__(self, groups: Optional[Sequence[StepGroup]] = None,
+                 path: str = CALIBRATION_FILE_PATH, refs_dir: str = CALIBRATION_REFS_DIR):
+        # The steps are handed in rather than imported: which ones exist depends
+        # on the modules registered (modules.registry.step_groups()), and the
+        # modules import this file for `Step`.
+        self.groups: List[StepGroup] = list(groups) if groups else [SHARED_GROUP]
+        self.steps: List[Step] = [step for group in self.groups for step in group.steps]
+        self.steps_by_name: Dict[str, Step] = {step.name: step for step in self.steps}
+        # What the wizard has to see calibrated to call the job done. Every
+        # mandatory step by default; narrowed to the enabled modules by whoever
+        # knows the configuration (core.context.build_context).
+        self.required: List[str] = [step.name for step in self.steps if not step.optional]
         self.path = path
         self.refs_dir = refs_dir
         self.points: Dict[str, Point] = {}
@@ -186,16 +192,20 @@ class Calibration:
         return os.path.exists(self.path)
 
     def is_calibrated(self, name: str) -> bool:
-        step = STEPS_BY_NAME.get(name)
+        step = self.steps_by_name.get(name)
         if step is None:
             return False
         return name in (self.regions if step.is_rectangle else self.points)
 
     def missing_steps(self, include_optional: bool = False) -> List[str]:
-        return [
-            step.name for step in STEPS
-            if (include_optional or not step.optional) and not self.is_calibrated(step.name)
-        ]
+        """Required steps not calibrated yet, in the order the wizard walks them."""
+        wanted = set(self.steps_by_name) if include_optional else set(self.required)
+        return [step.name for step in self.steps
+                if step.name in wanted and not self.is_calibrated(step.name)]
+
+    def titles(self, names: Sequence[str]) -> str:
+        """Step names as the wizard calls them, for messages."""
+        return ", ".join(self.steps_by_name[n].title if n in self.steps_by_name else n for n in names)
 
     @property
     def complete(self) -> bool:
@@ -260,7 +270,7 @@ class Calibration:
         centre of what was marked, which is how the wizard performs a step
         before moving on to the next one.
         """
-        step = STEPS_BY_NAME.get(name)
+        step = self.steps_by_name.get(name)
         if step is None:
             return None
         return self.region_center(name) if step.is_rectangle else self.point(name)
@@ -307,7 +317,7 @@ class Calibration:
             raise ValueError("the marked area is too small — mark two opposite corners")
 
         warning = None
-        step = STEPS_BY_NAME.get(name)
+        step = self.steps_by_name.get(name)
         if step is not None and step.keeps_reference:
             if image is None or cv2 is None:
                 raise ValueError("could not crop reference image from this area")
@@ -361,7 +371,7 @@ class Calibration:
         display scaling (1.25x on a 125% Windows desktop) while clicks take CSS
         pixels, so everything marked on those images was recorded that much too
         large. The mistake is uniform, so undoing it is arithmetic rather than
-        recalibration - which would otherwise mean redoing all thirteen steps.
+        recalibration - which would otherwise mean redoing every step.
         """
         if factor <= 0 or abs(factor - 1.0) < 0.001:
             return 0

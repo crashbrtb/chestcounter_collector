@@ -7,6 +7,11 @@ config.cfg
 config/calibration.json
 config/calib_refs/
 
+# What the modules remember between runs: when each one last ran, the players'
+# names and the tournaments already sent to each clan site
+config/module_state.json
+config/module_data/
+
 # Execution logs and environment
 execution_logs/
 venv/
