@@ -5,6 +5,10 @@ The GUI, the default configuration file and the validation of config.json are
 all generated from this single list, so a new parameter only has to be declared
 here once to become visible, editable and persisted.
 
+The sections below are the ones every module shares (browser, login, OCR...).
+Each feature module declares its own parameters next to its code, and they are
+stored under "modules" in config.json: see `module_sections()`.
+
 Field types
     str / password / path : free text (password is masked in the GUI)
     int / float           : numeric, optionally bounded by minimum/maximum
@@ -44,11 +48,9 @@ SECTIONS: List[Section] = [
     Section(
         "execution",
         "Execution",
-        "How the collector behaves when Windows Task Scheduler triggers run.bat.",
+        "How a run behaves when Windows Task Scheduler triggers run.bat. What a run does is "
+        "decided in the Modules tab.",
         [
-            Field("module", "choice", "Execution module", "chests",
-                  "Routine executed by run.bat. 'chests' collects clan chests.",
-                  choices=("chests", "journal", "chat", "all")),
             Field("close_browser_on_finish", "bool", "Close browser on finish", True,
                   "Disable to inspect the game screen after collection finishes."),
             Field("stop_on_error", "bool", "Stop on first error", False,
@@ -229,16 +231,54 @@ SECTIONS: List[Section] = [
 
 SECTIONS_BY_KEY = {s.key: s for s in SECTIONS}
 
+# Where the modules' own sections live in config.json: {"modules": {"chests": {...}}}.
+# A section key with a dot is a path into the file, so "modules.chests" is read
+# and written with the same get/set as "browser".
+MODULES_PREFIX = "modules"
+
+
+def module_section_key(module_key: str) -> str:
+    return f"{MODULES_PREFIX}.{module_key}"
+
+
+def module_sections() -> List[Section]:
+    """One section per registered module: its switch, its schedule, its parameters."""
+    # Imported here because the modules themselves import this file for `Field`.
+    from modules.registry import MODULES
+
+    return [module.section() for module in MODULES]
+
+
+def all_sections() -> List[Section]:
+    return SECTIONS + module_sections()
+
+
+def bucket(data: dict, section_key: str, create: bool = False) -> Optional[dict]:
+    """The dictionary a section is stored in, following the dots of its key."""
+    node = data
+    for part in section_key.split("."):
+        child = node.get(part)
+        if not isinstance(child, dict):
+            if not create:
+                return None
+            child = node[part] = {}
+        node = child
+    return node
+
 
 def default_config() -> dict:
     """The full configuration with every parameter at its declared default."""
-    data = {s.key: {f.key: f.default for f in s.fields} for s in SECTIONS}
+    data: dict = {}
+    for section in all_sections():
+        bucket(data, section.key, create=True).update({f.key: f.default for f in section.fields})
     data["accounts"] = []
     return data
 
 
 def field_for(section_key: str, field_key: str) -> Optional[Field]:
     section = SECTIONS_BY_KEY.get(section_key)
+    if section is None:
+        section = next((s for s in module_sections() if s.key == section_key), None)
     if not section:
         return None
     for f in section.fields:

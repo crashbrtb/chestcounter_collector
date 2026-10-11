@@ -12,9 +12,13 @@ of the cities that account owns. Collection follows exactly this order - log in
 to the account, then walk its profiles - which is why the profiles are nested
 inside the account instead of being a flat list.
 
-A profile without database credentials is skipped: there would be nowhere to
-record what was collected, and pretending otherwise would silently throw the
-chests away.
+A profile without database credentials is skipped by the chest module: there
+would be nowhere to record what was collected, and pretending otherwise would
+silently throw the chests away.
+
+What each module needs to know about a profile (the events module's site
+address and token, for one) is kept with the profile too, under `modules`: each
+profile belongs to one clan, so each one carries its own.
 """
 
 import copy
@@ -23,7 +27,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
-from .schema import SECTIONS, default_config, field_for
+from .schema import all_sections, bucket, default_config, field_for, module_section_key
 
 # Project layout
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -31,6 +35,10 @@ CONFIG_DIR = os.path.join(BASE_DIR, "config")
 CONFIG_FILE_PATH = os.path.join(CONFIG_DIR, "config.json")
 CALIBRATION_FILE_PATH = os.path.join(CONFIG_DIR, "calibration.json")
 CALIBRATION_REFS_DIR = os.path.join(CONFIG_DIR, "calib_refs")
+# When each module last ran for each profile (see core/schedule.py).
+MODULE_STATE_PATH = os.path.join(CONFIG_DIR, "module_state.json")
+# What a module keeps between runs, one folder per module.
+MODULE_DATA_DIR = os.path.join(CONFIG_DIR, "module_data")
 LEGACY_CONFIG_PATH = os.path.join(BASE_DIR, "position.cfg")
 
 
@@ -80,10 +88,15 @@ class ProfileConfig:
     enabled: bool = True
     database: Optional[DatabaseConfig] = None
     account_name: str = ""
+    # What each module was told about this profile: {"events": {"site_url": ...}}.
+    modules: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
     @property
     def has_database(self) -> bool:
         return self.database is not None and self.database.is_usable
+
+    def module_settings(self, module_key: str) -> Dict[str, Any]:
+        return dict(self.modules.get(module_key) or {})
 
     @property
     def label(self) -> str:
@@ -94,15 +107,19 @@ class ProfileConfig:
             "name": self.name,
             "enabled": self.enabled,
             "database": self.database.to_dict() if self.database else None,
+            "modules": {key: dict(values) for key, values in self.modules.items() if values},
         }
 
     @classmethod
     def from_dict(cls, data: dict, account_name: str = "") -> "ProfileConfig":
+        modules = data.get("modules")
         return cls(
             name=str(data.get("name", "") or ""),
             enabled=bool(data.get("enabled", True)),
             database=DatabaseConfig.from_dict(data.get("database")),
             account_name=account_name,
+            modules={str(key): dict(values) for key, values in modules.items() if isinstance(values, dict)}
+            if isinstance(modules, dict) else {},
         )
 
 
@@ -150,7 +167,7 @@ class AccountConfig:
         )
 
 
-def _coerce(value: Any, spec) -> Any:
+def coerce(value: Any, spec) -> Any:
     """Brings a value read from disk (or typed in the GUI) to its declared type."""
     if spec is None:
         return value
@@ -200,11 +217,12 @@ class ConfigManager:
                 raise ValueError(f"Invalid config.json ({exc}). Fix the file or delete it to start over.")
 
         merged = default_config()
-        for section in SECTIONS:
-            stored = raw.get(section.key) or {}
+        for section in all_sections():
+            stored = bucket(raw, section.key) or {}
+            values = bucket(merged, section.key)
             for spec in section.fields:
                 if spec.key in stored:
-                    merged[section.key][spec.key] = _coerce(stored[spec.key], spec)
+                    values[spec.key] = coerce(stored[spec.key], spec)
         merged["accounts"] = raw.get("accounts") or []
         self.data = merged
         return self.data
@@ -220,13 +238,17 @@ class ConfigManager:
 
     # -- values
     def get(self, section: str, key: str, default: Any = None) -> Any:
-        return self.data.get(section, {}).get(key, default)
+        return (bucket(self.data, section) or {}).get(key, default)
 
     def set(self, section: str, key: str, value: Any):
-        self.data.setdefault(section, {})[key] = _coerce(value, field_for(section, key))
+        bucket(self.data, section, create=True)[key] = coerce(value, field_for(section, key))
 
     def section(self, key: str) -> Dict[str, Any]:
-        return copy.deepcopy(self.data.get(key, {}))
+        return copy.deepcopy(bucket(self.data, key) or {})
+
+    def module(self, module_key: str) -> Dict[str, Any]:
+        """A module's own parameters, with its switch and its schedule."""
+        return self.section(module_section_key(module_key))
 
     # -- accounts
     @property
@@ -239,6 +261,13 @@ class ConfigManager:
 
     def enabled_accounts(self) -> List[AccountConfig]:
         return [a for a in self.accounts if a.enabled and a.active_profiles]
+
+    def profile_names(self, account_name: str) -> List[str]:
+        """Every profile name of an account, to tell near-twin names apart on screen."""
+        for account in self.accounts:
+            if account.name == account_name:
+                return [p.name for p in account.profiles if p.name]
+        return []
 
     def resolved_log_dir(self) -> str:
         raw = self.get("execution", "log_dir") or "execution_logs"

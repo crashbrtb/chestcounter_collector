@@ -20,6 +20,11 @@ button presses it before opening the next step, so the game arrives at the
 screen that step describes. Marking without pressing left the two out of step -
 the wizard asking for something inside a menu that was never opened - and the
 whole sequence had to be navigated by hand alongside it.
+
+There is one calibration for the whole application. The steps every module
+shares come first, then each module's own, under its name: they are whatever
+the calibration was built with (modules.registry.step_groups()), so a new
+module's steps appear here without this file knowing about them.
 """
 
 import queue
@@ -36,7 +41,7 @@ try:
 except ImportError:  # pragma: no cover
     cv2 = None
 
-from core.calibration import STEPS, STEPS_BY_NAME, Calibration
+from core.calibration import Calibration
 from core.vision import changed_fraction
 
 CANVAS_BG = "#0d1117"
@@ -58,6 +63,7 @@ class CalibrationWizard(ctk.CTkToplevel):
         super().__init__(master)
         self.ctx = context
         self.calibration: Calibration = context.calibration
+        self.steps = self.calibration.steps
         self.on_done = on_done
 
         self.index = 0
@@ -104,15 +110,21 @@ class CalibrationWizard(ctk.CTkToplevel):
 
         self.steps_list = ctk.CTkScrollableFrame(left, fg_color=CANVAS_BG)
         self.steps_list.pack(fill="both", expand=True, padx=10, pady=(0, 10))
-        for position, step in enumerate(STEPS):
-            button = ctk.CTkButton(
-                self.steps_list, text="", anchor="w", height=30,
-                fg_color="transparent", hover_color="#21262d",
-                font=ctk.CTkFont(size=12),
-                command=lambda index=position: self.go_to(index),
-            )
-            button.pack(fill="x", pady=1)
-            self.rows[position] = button
+        position = 0
+        for group in self.calibration.groups:
+            ctk.CTkLabel(self.steps_list, text=group.title.upper(), anchor="w",
+                         font=ctk.CTkFont(size=10, weight="bold"),
+                         text_color=ACCENT).pack(fill="x", padx=4, pady=(8, 2))
+            for _step in group.steps:
+                button = ctk.CTkButton(
+                    self.steps_list, text="", anchor="w", height=30,
+                    fg_color="transparent", hover_color="#21262d",
+                    font=ctk.CTkFont(size=12),
+                    command=lambda index=position: self.go_to(index),
+                )
+                button.pack(fill="x", pady=1)
+                self.rows[position] = button
+                position += 1
 
         # --- capture and instruction
         right = ctk.CTkFrame(body, fg_color=PANEL_BG, corner_radius=8)
@@ -198,7 +210,7 @@ class CalibrationWizard(ctk.CTkToplevel):
 
         outside = self.calibration.out_of_bounds(image.shape[1], image.shape[0])
         if outside:
-            names = ", ".join(STEPS_BY_NAME[n].title for n in outside if n in STEPS_BY_NAME)
+            names = self.calibration.titles(outside)
             self._set_state(
                 f"⚠ These steps are OUTSIDE the {image.shape[1]}x{image.shape[0]} page and "
                 f"will never work: {names}. They were recorded with the window at a different size — "
@@ -229,7 +241,7 @@ class CalibrationWizard(ctk.CTkToplevel):
         self.photo = ImageTk.PhotoImage(image)
         self.canvas.create_image(0, 0, anchor="nw", image=self.photo)
 
-        step = STEPS[self.index]
+        step = self.steps[self.index]
         if step.is_rectangle:
             region = self.calibration.regions.get(step.name)
             if region:
@@ -289,10 +301,10 @@ class CalibrationWizard(ctk.CTkToplevel):
 
     # ----------------------------------------------------------------- steps
     def _current(self):
-        return STEPS[self.index]
+        return self.steps[self.index]
 
     def go_to(self, index: int):
-        self.index = max(0, min(index, len(STEPS) - 1))
+        self.index = max(0, min(index, len(self.steps) - 1))
         self.corners.clear()
         self._show_step()
 
@@ -300,7 +312,7 @@ class CalibrationWizard(ctk.CTkToplevel):
         step = self._current()
         kind = {"click": "a point", "area": "an area", "region": "an area with reference image"}
         self.lbl_progress.configure(
-            text=f"Step {self.index + 1} of {len(STEPS)}  ·  {kind.get(step.type, step.type)}"
+            text=f"Step {self.index + 1} of {len(self.steps)}  ·  {kind.get(step.type, step.type)}"
             + ("  ·  optional" if step.optional else "")
         )
         self.lbl_title.configure(text=step.title)
@@ -317,7 +329,7 @@ class CalibrationWizard(ctk.CTkToplevel):
         self._draw()
 
     def _update_list(self):
-        for position, step in enumerate(STEPS):
+        for position, step in enumerate(self.steps):
             done = self.calibration.is_calibrated(step.name)
             mark = "✔" if done else ("○" if not step.optional else "·")
             current = "▸ " if position == self.index else "   "
@@ -409,7 +421,7 @@ class CalibrationWizard(ctk.CTkToplevel):
         here to prevent.
         """
         step = self._current()
-        last = self.index >= len(STEPS) - 1
+        last = self.index >= len(self.steps) - 1
 
         if not step.acts:
             if last:
@@ -460,7 +472,7 @@ class CalibrationWizard(ctk.CTkToplevel):
 
     def _go_next(self, note: str = "", colour: str = MUTED):
         """Opens the next step, keeping whatever was just reported visible above its prompt."""
-        if self.index >= len(STEPS) - 1:
+        if self.index >= len(self.steps) - 1:
             if self.calibration.complete:
                 self._finished()
             return
@@ -594,7 +606,7 @@ class CalibrationWizard(ctk.CTkToplevel):
 
         missing = self.calibration.require("chest_area", "open_button_area", "open_button")
         if missing:
-            titles = ", ".join(STEPS_BY_NAME[name].title for name in missing)
+            titles = self.calibration.titles(missing)
             self._set_state(f"Calibrate these steps first: {titles}.", WARN_COLOR)
             return
 
@@ -604,7 +616,7 @@ class CalibrationWizard(ctk.CTkToplevel):
         threading.Thread(target=self._run_chest_test, daemon=True).start()
 
     def _run_chest_test(self):
-        from modules.chest_collector import generation_time, split_row, visible_chests
+        from modules.chests.collector import generation_time, split_row, visible_chests
 
         try:
             self.ctx.sync_viewport()
@@ -661,7 +673,7 @@ class CalibrationWizard(ctk.CTkToplevel):
         self._set_state("Step cleared. Click on the capture to calibrate again.", WARN_COLOR)
 
     def skip(self):
-        if self.index < len(STEPS) - 1:
+        if self.index < len(self.steps) - 1:
             self.go_to(self.index + 1)
 
     def _finished(self):

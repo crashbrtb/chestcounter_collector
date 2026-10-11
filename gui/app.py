@@ -7,6 +7,11 @@ databases, and the calibration. The window is built from `config/schema.py`, so
 a parameter added there shows up here with its label and help text without any
 change to this file.
 
+The same goes for the modules: the Modules tab has one card per entry of
+`modules/registry.py`, with its switch, its schedule and its own parameters, and
+what a module needs to know about each profile is asked in the profile's
+"Modules…" dialog. A new module shows up in both without any change here.
+
 The run button exists so the whole loop - configure, calibrate, test, fix -
 happens in one place. It runs the collection in a worker thread and streams the
 same log the scheduled run would write, because the useful question after a
@@ -22,10 +27,13 @@ from typing import Dict, List, Optional
 import customtkinter as ctk
 from tkinter import messagebox
 
-from config.schema import SECTIONS
-from config.settings import AccountConfig, ConfigManager, DatabaseConfig, ProfileConfig
+from config.schema import SECTIONS, module_sections
+from config.settings import AccountConfig, ConfigManager, DatabaseConfig, ProfileConfig, coerce
 from core.calibration import Calibration
+from core.schedule import ModuleSchedule
 from database.db_connection import test_connection
+from modules.base_module import BaseModule
+from modules.registry import MODULES, calibration_scope, step_groups
 from utils.cancel import Cancelled, cancellation, escape_watcher
 from utils.logger import logger
 
@@ -150,6 +158,121 @@ class DatabaseDialog(ctk.CTkToplevel):
         self.destroy()
 
 
+class ProfileModulesDialog(ctk.CTkToplevel):
+    """What each module needs to know about one profile (a clan site and its token, say)."""
+
+    def __init__(self, master, profile: ProfileConfig, on_save):
+        super().__init__(master)
+        self.profile = profile
+        self.on_save = on_save
+        self.entries: Dict[str, Dict[str, object]] = {}
+        self.results: queue.Queue = queue.Queue()
+
+        self.title(f"Modules — {profile.name or 'new profile'}")
+        self.geometry("560x460")
+        self.transient(master)
+        self.grab_set()
+
+        ctk.CTkLabel(self, text="Module settings for this profile",
+                     font=ctk.CTkFont(size=15, weight="bold"), text_color=ACCENT).pack(pady=(16, 2))
+        ctk.CTkLabel(self, text="Each profile belongs to one clan, so each one has its own values. "
+                                "A module left empty here is not run on this profile.",
+                     font=ctk.CTkFont(size=11), text_color=MUTED, wraplength=500).pack(pady=(0, 8))
+
+        body = ctk.CTkScrollableFrame(self, fg_color="transparent")
+        body.pack(fill="both", expand=True, padx=16)
+        for module in MODULES:
+            if module.profile_fields:
+                self._build_module(body, module)
+
+        buttons = ctk.CTkFrame(self, fg_color="transparent")
+        buttons.pack(fill="x", padx=24, pady=(6, 16))
+        ctk.CTkButton(buttons, text="Save", command=self._save).pack(side="right")
+        self.after(200, self._drain)
+
+    def _build_module(self, parent, module):
+        block = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=8)
+        block.pack(fill="x", pady=6)
+        ctk.CTkLabel(block, text=module.title, font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=ACCENT).pack(anchor="w", padx=12, pady=(10, 4))
+
+        stored = self.profile.module_settings(module.key)
+        self.entries[module.key] = {}
+        for spec in module.profile_fields:
+            row = ctk.CTkFrame(block, fg_color="transparent")
+            row.pack(fill="x", padx=12, pady=3)
+            ctk.CTkLabel(row, text=spec.label, width=130, anchor="w").pack(side="left")
+            value = stored.get(spec.key, spec.default)
+            if spec.type == "bool":
+                widget = ctk.CTkCheckBox(row, text="", width=30)
+                if value:
+                    widget.select()
+                widget.pack(side="left")
+            else:
+                widget = ctk.CTkEntry(row, show="*" if spec.is_secret else "")
+                widget.insert(0, "" if value is None else str(value))
+                widget.pack(side="left", fill="x", expand=True)
+            self.entries[module.key][spec.key] = widget
+            if spec.help:
+                ctk.CTkLabel(block, text=spec.help, font=ctk.CTkFont(size=11), text_color=MUTED,
+                             wraplength=480, justify="left").pack(anchor="w", padx=12)
+
+        label = ctk.CTkLabel(block, text="", font=ctk.CTkFont(size=11), text_color=MUTED,
+                             wraplength=480, justify="left")
+        # Only a module that knows how to try its values gets the button.
+        if module.test_profile.__func__ is not BaseModule.test_profile.__func__:
+            ctk.CTkButton(block, text="Test connection", width=130, fg_color="#21262d",
+                          command=lambda: self._test(module, label)).pack(anchor="w", padx=12, pady=(8, 0))
+        label.pack(anchor="w", padx=12, pady=(4, 10))
+
+    def _values(self, module) -> Dict[str, object]:
+        values = {}
+        for spec in module.profile_fields:
+            widget = self.entries[module.key][spec.key]
+            raw = bool(widget.get()) if isinstance(widget, ctk.CTkCheckBox) else widget.get().strip()
+            values[spec.key] = coerce(raw, spec)
+        return values
+
+    def _test(self, module, label):
+        label.configure(text="Testing...", text_color=MUTED)
+        values = self._values(module)
+
+        def work():
+            try:
+                outcome = module.test_profile(values) or (False, "Nothing to test.")
+            except Exception as exc:  # noqa: BLE001
+                outcome = (False, str(exc))
+            self.results.put((label, outcome))
+
+        # Off the window's thread: a site that does not answer takes its whole timeout.
+        threading.Thread(target=work, daemon=True).start()
+
+    def _drain(self):
+        while True:
+            try:
+                label, (ok, message) = self.results.get_nowait()
+            except queue.Empty:
+                break
+            label.configure(text=("✔ " if ok else "✖ ") + message,
+                            text_color=OK_COLOR if ok else ERROR_COLOR)
+        if self.winfo_exists():
+            self.after(200, self._drain)
+
+    def _save(self):
+        modules = dict(self.profile.modules)
+        for module in MODULES:
+            if not module.profile_fields:
+                continue
+            values = self._values(module)
+            # Nothing typed is nothing stored: the profile simply does not use the module.
+            if any(value != spec.default for value, spec in zip(values.values(), module.profile_fields)):
+                modules[module.key] = values
+            else:
+                modules.pop(module.key, None)
+        self.on_save(modules)
+        self.destroy()
+
+
 class ProfileRow(ctk.CTkFrame):
     """One profile inside an account card."""
 
@@ -173,6 +296,9 @@ class ProfileRow(ctk.CTkFrame):
 
         ctk.CTkButton(self, text="Database…", width=80, fg_color="#21262d",
                       command=self._edit_database).pack(side="left", padx=4)
+        if any(module.profile_fields for module in MODULES):
+            ctk.CTkButton(self, text="Modules…", width=80, fg_color="#21262d",
+                          command=self._edit_modules).pack(side="left", padx=4)
         ctk.CTkButton(self, text="✕", width=32, fg_color="#21262d", hover_color=ERROR_COLOR,
                       command=lambda: self.on_remove(self)).pack(side="left", padx=(4, 10))
 
@@ -180,9 +306,14 @@ class ProfileRow(ctk.CTkFrame):
 
     def _refresh_database_label(self):
         database = self.profile.database
+        # What the other modules have for this profile, after the database.
+        extras = [text for text in (module.profile_summary(self.profile) for module in MODULES) if text]
         if database and database.is_usable:
-            self.lbl_database.configure(text=f"{database.user}@{database.host}/{database.database}",
-                                        text_color=MUTED)
+            text = f"{database.user}@{database.host}/{database.database}"
+            self.lbl_database.configure(text="  ·  ".join([text] + extras), text_color=MUTED)
+        elif extras:
+            self.lbl_database.configure(text="  ·  ".join(["no database (no chests)"] + extras),
+                                        text_color=WARN_COLOR)
         else:
             self.lbl_database.configure(text="no database — profile will be skipped", text_color=WARN_COLOR)
 
@@ -194,12 +325,21 @@ class ProfileRow(ctk.CTkFrame):
         self.profile.name = self.name.get().strip()
         DatabaseDialog(self.winfo_toplevel(), self.profile, apply)
 
+    def _edit_modules(self):
+        def apply(modules):
+            self.profile.modules = modules
+            self._refresh_database_label()
+
+        self.profile.name = self.name.get().strip()
+        ProfileModulesDialog(self.winfo_toplevel(), self.profile, apply)
+
     def to_profile(self, account_name: str) -> ProfileConfig:
         return ProfileConfig(
             name=self.name.get().strip(),
             enabled=bool(self.enabled.get()),
             database=self.profile.database,
             account_name=account_name,
+            modules=self.profile.modules,
         )
 
 
@@ -313,10 +453,11 @@ class App(ctk.CTk):
     def __init__(self, config: ConfigManager, open_calibration: bool = False):
         super().__init__()
         self.config_manager = config
-        self.calibration = Calibration()
+        self.calibration = Calibration(step_groups())
         self.context = None
         self.log_queue: queue.Queue = queue.Queue()
         self.widgets: Dict[str, Dict[str, object]] = {}
+        self.module_status: Dict[str, ctk.CTkLabel] = {}
         self.cards: List[AccountCard] = []
         self.worker: Optional[threading.Thread] = None
 
@@ -342,10 +483,12 @@ class App(ctk.CTk):
         self.tabs = ctk.CTkTabview(self, fg_color=PANEL_BG)
         self.tabs.pack(fill="both", expand=True, padx=16, pady=(4, 8))
         self.tabs.add("Execution")
+        self.tabs.add("Modules")
         self.tabs.add("Parameters")
         self.tabs.add("Accounts and profiles")
 
         self._build_run_tab(self.tabs.tab("Execution"))
+        self._build_modules_tab(self.tabs.tab("Modules"))
         self._build_parameters_tab(self.tabs.tab("Parameters"))
         self._build_accounts_tab(self.tabs.tab("Accounts and profiles"))
         self._refresh_status()
@@ -361,12 +504,16 @@ class App(ctk.CTk):
                       command=self.open_calibration).pack(side="left", padx=4)
         ctk.CTkButton(top, text="3 · Verify configuration", width=200, height=38,
                       fg_color="#21262d", command=self.check_configuration).pack(side="left", padx=4)
-        self.btn_run = ctk.CTkButton(top, text="▶ Run collection now", width=210, height=38,
+        self.btn_run = ctk.CTkButton(top, text="▶ Run now", width=150, height=38,
                                      fg_color="#238636", hover_color="#2ea043", command=self.run_collection)
         self.btn_run.pack(side="right", padx=4)
         self.btn_stop = ctk.CTkButton(top, text="■ Stop", width=100, height=38, state="disabled",
                                       fg_color="#21262d", hover_color=ERROR_COLOR, command=self.stop_run)
         self.btn_stop.pack(side="right", padx=4)
+        # A once-a-day module that already ran today is otherwise left out of a
+        # run started here, which is the last thing wanted when testing it.
+        self.chk_force = ctk.CTkCheckBox(top, text="Ignore schedule", font=ctk.CTkFont(size=11), width=120)
+        self.chk_force.pack(side="right", padx=8)
 
         info = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=8)
         info.pack(fill="x", padx=8, pady=(4, 8))
@@ -382,17 +529,71 @@ class App(ctk.CTk):
         footer = ctk.CTkFrame(parent, fg_color="transparent")
         footer.pack(fill="x", padx=8, pady=(0, 10))
         ctk.CTkLabel(footer,
-                     text="Hold ESC to cancel an ongoing collection from any window.  ·  To schedule, point Windows Task Scheduler to run.bat.",
+                     text="Hold ESC to cancel an ongoing run from any window.  ·  To schedule, point Windows Task Scheduler to run.bat.",
                      font=ctk.CTkFont(size=11), text_color=MUTED).pack(side="left")
         ctk.CTkButton(footer, text="Open logs folder", width=150, fg_color="#21262d",
                       command=lambda: webbrowser.open(self.config_manager.resolved_log_dir())
                       ).pack(side="right")
 
+    # -- modules tab
+    def _build_modules_tab(self, parent):
+        toolbar = ctk.CTkFrame(parent, fg_color="transparent")
+        toolbar.pack(fill="x", padx=8, pady=(10, 4))
+        ctk.CTkLabel(toolbar,
+                     text="What a run does. Each module is turned on or off here and runs on every profile "
+                          "that has what it needs (Accounts and profiles).",
+                     font=ctk.CTkFont(size=12), text_color=MUTED, wraplength=760,
+                     justify="left").pack(side="left")
+        ctk.CTkButton(toolbar, text="💾 Save modules", width=180,
+                      command=self.save_parameters).pack(side="right", padx=4)
+
+        scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
+        scroll.pack(fill="both", expand=True, padx=8, pady=(0, 10))
+
+        for module, section in zip(MODULES, module_sections()):
+            block = ctk.CTkFrame(scroll, fg_color=CARD_BG, corner_radius=8)
+            block.pack(fill="x", pady=6)
+            ctk.CTkLabel(block, text=module.title, font=ctk.CTkFont(size=15, weight="bold"),
+                         text_color=ACCENT).pack(anchor="w", padx=14, pady=(12, 0))
+            ctk.CTkLabel(block, text=module.description, font=ctk.CTkFont(size=11),
+                         text_color=MUTED, wraplength=980, justify="left").pack(anchor="w", padx=14, pady=(2, 4))
+            status = ctk.CTkLabel(block, text="", font=ctk.CTkFont(size=11), text_color=MUTED,
+                                  wraplength=980, justify="left", anchor="w")
+            status.pack(anchor="w", padx=14, pady=(0, 8))
+            self.module_status[module.key] = status
+
+            self.widgets[section.key] = {}
+            for spec in section.fields:
+                self._build_field(block, section.key, spec)
+
+            if module.actions:
+                actions = ctk.CTkFrame(block, fg_color="transparent")
+                actions.pack(fill="x", padx=14, pady=(8, 0))
+                for action in module.actions:
+                    ctk.CTkButton(actions, text=action.label, fg_color="#21262d",
+                                  command=lambda m=module, a=action: self.run_module_action(m, a)
+                                  ).pack(side="left")
+                    if action.help:
+                        ctk.CTkLabel(actions, text=action.help, font=ctk.CTkFont(size=11), text_color=MUTED,
+                                     wraplength=700, justify="left").pack(side="left", padx=12)
+            ctk.CTkFrame(block, fg_color="transparent", height=10).pack()
+
+    def run_module_action(self, module, action):
+        try:
+            message = getattr(module, action.method)(self.config_manager, self.calibration)
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror(module.title, f"{action.label} failed:\n\n{exc}")
+            return
+        logger.info(f"{module.title} — {action.label}: " + str(message).replace("\n", " | "))
+        self._reload_widgets()
+        self._refresh_status()
+        messagebox.showinfo(module.title, str(message))
+
     # -- parameters tab
     def _build_parameters_tab(self, parent):
         toolbar = ctk.CTkFrame(parent, fg_color="transparent")
         toolbar.pack(fill="x", padx=8, pady=(10, 4))
-        ctk.CTkLabel(toolbar, text="All application parameters. Hover over descriptions to understand each one.",
+        ctk.CTkLabel(toolbar, text="Parameters every module shares. Hover over descriptions to understand each one.",
                      font=ctk.CTkFont(size=12), text_color=MUTED).pack(side="left")
         ctk.CTkButton(toolbar, text="Restore defaults", width=160, fg_color="#21262d",
                       command=self.restore_defaults).pack(side="right", padx=4)
@@ -437,8 +638,10 @@ class App(ctk.CTk):
             widget.pack(side="left")
 
         if spec.help:
+            # A text box leaves less room beside it than a checkbox or a dropdown does.
+            room = 520 if spec.type in ("bool", "choice") else 420
             ctk.CTkLabel(row, text=spec.help, font=ctk.CTkFont(size=11), text_color=MUTED,
-                         wraplength=520, justify="left", anchor="w").pack(side="left", padx=12, fill="x", expand=True)
+                         wraplength=room, justify="left", anchor="w").pack(side="left", padx=12, fill="x", expand=True)
 
         self.widgets[section_key][spec.key] = widget
 
@@ -489,7 +692,7 @@ class App(ctk.CTk):
                 self.config_manager.set(section_key, key, value)
         self.config_manager.save()
         self._refresh_status()
-        messagebox.showinfo("Configuration", "Parameters saved to config/config.json.")
+        messagebox.showinfo("Configuration", "Modules and parameters saved to config/config.json.")
 
     def save_accounts(self):
         accounts = [card.to_account() for card in self.cards if card.name.get().strip()]
@@ -517,16 +720,23 @@ class App(ctk.CTk):
         for section in SECTIONS:
             for spec in section.fields:
                 self.config_manager.set(section.key, spec.key, defaults[section.key][spec.key])
-                widget = self.widgets[section.key][spec.key]
-                if isinstance(widget, ctk.CTkCheckBox):
-                    widget.select() if spec.default else widget.deselect()
-                elif isinstance(widget, ctk.CTkOptionMenu):
-                    widget.set(str(spec.default))
-                else:
-                    widget.delete(0, "end")
-                    widget.insert(0, str(spec.default))
+        self._reload_widgets()
         self.config_manager.save()
         self._refresh_status()
+
+    def _reload_widgets(self):
+        """Shows what the configuration holds now, after something other than typing changed it."""
+        for section in SECTIONS + module_sections():
+            for spec in section.fields:
+                widget = self.widgets.get(section.key, {}).get(spec.key)
+                value = self.config_manager.get(section.key, spec.key, spec.default)
+                if isinstance(widget, ctk.CTkCheckBox):
+                    widget.select() if value else widget.deselect()
+                elif isinstance(widget, ctk.CTkOptionMenu):
+                    widget.set(str(value))
+                elif widget is not None:
+                    widget.delete(0, "end")
+                    widget.insert(0, "" if value is None else str(value))
 
     def _ensure_context(self, connect: bool = True):
         from core.context import build_context
@@ -559,10 +769,10 @@ class App(ctk.CTk):
 
     def check_configuration(self):
         def work():
-            from core.runner import CollectorRunner
+            from core.runner import ModuleRunner
 
             context = self._ensure_context(connect=False)
-            problems = CollectorRunner(context).preflight()
+            problems = ModuleRunner(context).preflight()
             if problems:
                 for problem in problems:
                     logger.error(problem)
@@ -572,20 +782,21 @@ class App(ctk.CTk):
         self._run_in_background(work)
 
     def run_collection(self):
-        if not messagebox.askyesno("Run collection",
-                                   "Run collection now with saved configuration?\n\n"
+        if not messagebox.askyesno("Run now",
+                                   "Run the enabled modules now with saved configuration?\n\n"
                                    "The browser will be automated."):
             return
+        force = bool(self.chk_force.get())
 
         def work():
-            from core.runner import CollectorRunner, RunnerError
+            from core.runner import ModuleRunner, RunnerError
 
             context = self._ensure_context(connect=False)
-            runner = CollectorRunner(context)
+            runner = ModuleRunner(context)
             try:
-                summary = runner.run()
+                summary = runner.run(force=force)
                 logger.info(
-                    f"Collection finished: {summary['collected']} chests, "
+                    f"Run finished: {summary['collected']} chests, "
                     f"{len(summary['failures'])} failure(s), duration {summary['duration']}."
                 )
             except Cancelled as exc:
@@ -603,7 +814,7 @@ class App(ctk.CTk):
 
         cancellation.reset()
         escape_watcher.start()
-        self._run_in_background(work, busy_text="⏳ Collecting...", stoppable=True)
+        self._run_in_background(work, busy_text="⏳ Running...", stoppable=True)
 
     # ---------------------------------------------------------------- helpers
     def stop_run(self):
@@ -647,10 +858,12 @@ class App(ctk.CTk):
 
     def _refresh_status(self):
         self.calibration.load()
+        self.calibration.required = calibration_scope(self.config_manager)
         accounts = self.config_manager.accounts
         profiles = [p for a in accounts for p in a.profiles]
         collectable = [p for p in profiles if p.has_database]
         missing = self.calibration.missing_steps()
+        modules_text = self._refresh_modules(profiles)
 
         if missing:
             calibration_text = f"✖ Incomplete calibration ({len(missing)} step(s) missing)"
@@ -676,11 +889,43 @@ class App(ctk.CTk):
         self.lbl_info.configure(text=(
             f"Registered accounts: {len(accounts)}   ·   profiles: {len(profiles)} "
             f"({len(collectable)} with configured database)\n"
+            f"Modules: {modules_text}\n"
             f"Calibration: {calibration_text}   ·   calibrated viewport: "
             f"{self.calibration.viewport[0]}x{self.calibration.viewport[1]}\n"
             f"OCR: {engine}\n"
             f"Configuration: {self.config_manager.path}"
         ))
+
+
+    def _refresh_modules(self, profiles: List[ProfileConfig]) -> str:
+        """Updates each module's status line; returns the one-line summary for the run tab."""
+        schedule = ModuleSchedule()
+        summary = []
+        for module in MODULES:
+            options = self.config_manager.module(module.key)
+            enabled = bool(options.get("enabled", module.default_enabled))
+            ready = [p for p in profiles if p.enabled and p.name and module.configured_for(p)]
+            missing = self.calibration.require(*module.required_steps)
+            done = [entry.get("last_success", "") for entry in schedule.state.get(module.key, {}).values()]
+            last = max(done, default="").replace("T", " ")[:16]
+
+            parts = [f"{len(ready)} profile(s) set up",
+                     "calibrated" if not missing else f"{len(missing)} calibration step(s) missing",
+                     f"last done {last}" if last else "never run"]
+            if not enabled:
+                text, color = "○ Disabled", MUTED
+            elif not ready:
+                text, color = "○ Enabled, but no profile is set up for it yet", WARN_COLOR
+            elif missing:
+                text, color = "✖ Enabled, not calibrated", ERROR_COLOR
+            else:
+                text, color = "✔ Enabled", OK_COLOR
+            if module.key in self.module_status:
+                self.module_status[module.key].configure(text=f"{text}   ·   " + "   ·   ".join(parts),
+                                                         text_color=color)
+            if enabled:
+                summary.append(f"{module.title} ({options.get('schedule')}, {len(ready)} profile(s))")
+        return ",  ".join(summary) or "none enabled"
 
 
 def launch(config: Optional[ConfigManager] = None, open_calibration: bool = False):

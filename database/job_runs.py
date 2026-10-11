@@ -27,7 +27,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from mysql.connector import Error
 
-from config.settings import AccountConfig, DatabaseConfig
+from config.settings import DatabaseConfig, ProfileConfig
 from utils.logger import logger
 
 from .db_connection import open_connection
@@ -58,16 +58,16 @@ class _Target:
 
 
 class JobRunReporter:
-    def __init__(self, accounts: Iterable[AccountConfig], only_profile: Optional[str] = None):
+    def __init__(self, profiles: Iterable[ProfileConfig]):
+        """`profiles` are the ones this run will collect; those without a database have no site to tell."""
         self.targets: Dict[Tuple[str, int, str], _Target] = {}
-        for account in accounts:
-            for profile in account.collectable_profiles:
-                if only_profile and only_profile.lower() not in profile.name.lower():
-                    continue
-                db = profile.database
-                key = (db.host.lower(), int(db.port), db.database.lower())
-                target = self.targets.setdefault(key, _Target(db))
-                target.profiles.append((account.name, profile.name))
+        for profile in profiles:
+            if not profile.has_database:
+                continue
+            db = profile.database
+            key = (db.host.lower(), int(db.port), db.database.lower())
+            target = self.targets.setdefault(key, _Target(db))
+            target.profiles.append((profile.account_name, profile.name))
         self.host = (socket.gethostname() or "unknown")[:100]
         self._started = time.monotonic()
 

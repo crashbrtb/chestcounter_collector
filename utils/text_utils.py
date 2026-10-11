@@ -61,6 +61,24 @@ def _lookalike(text: str) -> str:
     return _alphanumeric(text).translate(_LOOKALIKES)
 
 
+# The glyphs a screen reading swaps without anyone being able to tell from the
+# picture: capital I, small L and the digit one; the letter O and the zero.
+_SCREEN_TWINS = str.maketrans({"1": "l", "i": "l", "0": "o"})
+
+
+def ocr_key(text: str) -> str:
+    """
+    What a name keeps whatever the screen reading does to it.
+
+    On top of `alphanumeric_key` - which already drops case, accents, spacing,
+    punctuation and every letter outside the Latin alphabet, the ones no engine
+    here writes - the look-alike glyphs become one: `HeStla BR` and `HeStIa BR`
+    share a key. Deliberately narrower than `_LOOKALIKES`: this key decides
+    whose chest it is, and `5`/`s` or `8`/`b` are told apart well enough.
+    """
+    return _alphanumeric(text).translate(_SCREEN_TWINS)
+
+
 def similarity(a: str, b: str) -> float:
     """How alike two names are (0..1), at the most tolerant level that still matches."""
     scores = [
@@ -90,6 +108,24 @@ def names_match(wanted: str, read: str, threshold: float = 0.75) -> bool:
     if target and len(target) >= 4 and target in _lookalike(read):
         return True
     return similarity(wanted, read) >= threshold
+
+
+def contains_name(wanted: str, read: str) -> bool:
+    """
+    Is `wanted` spelled out in `read`, letter for letter?
+
+    The strict test, for decisions that cannot be undone. A fuzzy score cannot
+    tell 'Crash BR' from 'Cash BR' unless both are candidates, and a profile the
+    game has but the configuration does not list is never a candidate.
+    """
+    if not (wanted or "").strip() or not (read or "").strip():
+        return False
+    if normalize_name(wanted) in normalize_name(read):
+        return True
+    if _no_spaces(wanted) and _no_spaces(wanted) in _no_spaces(read):
+        return True
+    target = _lookalike(wanted)
+    return bool(target) and len(target) >= 4 and target in _lookalike(read)
 
 
 def match_score(wanted: str, read: str, allow_containment: bool = True) -> float:

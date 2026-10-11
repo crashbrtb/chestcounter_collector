@@ -25,6 +25,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from config.settings import ProfileConfig
 from database.db_connection import DatabaseConnection
+from database.job_runs import JobRunReporter
 from database.repositories import ChestRepository
 from database.vocabulary import Vocabulary, load_vocabulary
 from utils.cancel import cancellation
@@ -36,7 +37,8 @@ try:
 except ImportError:  # pragma: no cover
     cv2 = None
 
-from .base_module import BaseModule
+from ..base_module import BaseModule
+from .steps import REQUIRED_STEPS, STEPS
 
 # The only bound on the loop, and it has to be generous: measured on four months
 # of production, a busy hour brought 3 408 chests and a busy day 16 712, while a
@@ -253,6 +255,13 @@ def visible_chests(calibration, vision, browser) -> List[dict]:
 class ChestCollector(BaseModule):
     """Collects the 'Gifts' and 'Triumphal Gifts' tabs for a profile."""
 
+    key = "chests"
+    title = "Clan chests"
+    description = ("Opens every clan gift of each profile and records it in that profile's database. "
+                   "A profile without a database is skipped.")
+    steps = STEPS
+    required_steps = REQUIRED_STEPS
+
     #: names the database already knows, loaded per profile
     vocabulary: Optional[Vocabulary] = None
     #: which profile is being collected, for the audit trail in `errors`
@@ -262,9 +271,25 @@ class ChestCollector(BaseModule):
     #: how many minutes each chest of the last batch has left on its countdown
     _minutes_left: List[Optional[int]] = []
 
-    @property
-    def name(self) -> str:
-        return "ChestCollector"
+    def __init__(self, context):
+        super().__init__(context)
+        self._reporter: Optional[JobRunReporter] = None
+
+    @classmethod
+    def configured_for(cls, profile: ProfileConfig) -> bool:
+        return profile.has_database
+
+    # -------------------------------------------------------------- heartbeat
+    def begin_run(self, profiles: List[ProfileConfig]):
+        """Opens the run's row in the site's `job_runs`, in every database it will write to."""
+        self._reporter = JobRunReporter(profiles)
+        self._reporter.start()
+
+    def end_run(self, results: List[Dict[str, Any]], duration: str = "",
+                error: Optional[str] = None, cancelled: bool = False):
+        if self._reporter is not None:
+            self._reporter.finish(results, duration=duration, error=error, cancelled=cancelled)
+            self._reporter = None
 
     # ------------------------------------------------------------- navigation
     def open_gift_menu(self) -> bool:
@@ -574,7 +599,7 @@ class ChestCollector(BaseModule):
         logger.info(f"Tab '{label}': {collected} collected, {incomplete} incomplete.")
         return collected, incomplete
 
-    def collect_for_profile(self, profile: ProfileConfig) -> Dict[str, Any]:
+    def run_for_profile(self, profile: ProfileConfig) -> Dict[str, Any]:
         """Collects both gift tabs for one profile and writes them to its database."""
         missing = self.calibration.require("chest_area", "open_button_area", "open_button")
         if missing:
@@ -626,8 +651,3 @@ class ChestCollector(BaseModule):
             "collected_triumphal": triumphal,
             "incomplete": total_incomplete,
         }
-
-    def run(self, profile: Optional[ProfileConfig] = None, **kwargs) -> Dict[str, Any]:
-        if profile is None:
-            raise ValueError("ChestCollector.run requires a profile.")
-        return self.collect_for_profile(profile)

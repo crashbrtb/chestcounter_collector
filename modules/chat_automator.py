@@ -6,23 +6,37 @@ whole string as one event: accents and emoji arrive intact and no keyboard
 layout is involved. That is the part worth keeping from the old clipboard trick,
 without the clipboard.
 
-Like the journal module, it waits on calibration steps of its own (where the
-chat opens and where its input box is) before it can do anything unattended.
+Not in modules/registry.py yet: it has nothing to announce by itself. It is kept
+as the smallest example of what a module is - its own calibration steps, its
+own parameter, one job per profile - and listing it in the registry is all it
+takes for it to show up in the Modules tab, the wizard and the run.
 """
 
 from typing import Any, Dict
 
+from config.schema import Field
+from config.settings import ProfileConfig
+from core.calibration import Step
 from utils.logger import logger
 
 from .base_module import BaseModule
 
-REQUIRED_STEPS = ("chat_button", "chat_input")
-
 
 class ChatAutomator(BaseModule):
-    @property
-    def name(self) -> str:
-        return "ChatAutomator"
+    key = "chat"
+    title = "Clan chat message"
+    description = "Sends a message to the clan chat of each profile."
+    default_enabled = False
+    settings = (
+        Field("message", "str", "Message", "", "What is sent to the clan chat. Empty sends nothing."),
+    )
+    steps = (
+        Step("chat_button", "click", "Chat button",
+             "Click the button that opens the CLAN CHAT.", acts=True),
+        Step("chat_input", "click", "Chat input box",
+             "With the chat open, click the box where a message is typed."),
+    )
+    required_steps = ("chat_button", "chat_input")
 
     def send_message(self, message: str) -> bool:
         chat_button = self.calibration.point("chat_button")
@@ -37,14 +51,8 @@ class ChatAutomator(BaseModule):
         logger.info(f"Chat message sent: '{message}'")
         return True
 
-    def run(self, message: str = "", **kwargs) -> Dict[str, Any]:
-        missing = self.calibration.require(*REQUIRED_STEPS)
-        if missing:
-            logger.warning(
-                f"The Chat module has no calibration steps configured yet ({', '.join(missing)}). "
-                f"Nothing was sent."
-            )
-            return {"module": self.name, "success": False, "reason": "no calibration"}
+    def run_for_profile(self, profile: ProfileConfig) -> Dict[str, Any]:
+        message = str(self.options.get("message") or "").strip()
         if not message:
-            return {"module": self.name, "success": False, "reason": "empty message"}
-        return {"module": self.name, "success": self.send_message(message), "message": message}
+            return {"success": False, "retry": False, "profile": profile.name, "reason": "empty message"}
+        return {"success": self.send_message(message), "profile": profile.name, "message": message}
