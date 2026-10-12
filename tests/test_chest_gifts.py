@@ -336,6 +336,39 @@ class Collection(unittest.TestCase):
         self.assertEqual({}, repo.learned)
         self.assertEqual([{"name": "", "player": "AndraBianca", "source": "", "gift": 10}], repo.incomplete)
 
+    def test_without_any_countdown_the_players_vouch_for_the_reading(self):
+        # A chest area calibrated around the text alone: no countdown is ever read.
+        game = Game([row(10, chest_type=9999), row(11, chest_type=9999)])
+        game.reading = ["Mimic Chest", "From: andrabianca", "Source: Mimic Chest"]
+        repo = Repo()
+
+        (collected, incomplete, _finished), _module = self.collect(game, repo)
+
+        self.assertEqual((2, 0), (collected, incomplete))
+        self.assertEqual({9999: ("Mimic Chest", "Mimic Chest")}, repo.learned)
+        self.assertEqual({("Mimic Chest", "AndraBianca", "Mimic Chest")}, {r[:3] for r in repo.rows.values()})
+
+    def test_without_any_countdown_another_players_line_is_not_believed(self):
+        game = Game([row(10, chest_type=9999)])
+        game.reading = ["Bone Chest", "From: Pipolebon", "Source: Level 25 Crypt"]
+        repo = Repo()
+
+        (collected, incomplete, _finished), _module = self.collect(game, repo)
+
+        self.assertEqual((0, 1), (collected, incomplete))
+        self.assertEqual({}, repo.learned)
+
+    def test_without_any_countdown_an_unknown_player_is_not_read_from_the_screen(self):
+        game = Game([row(10, player=777)])
+        game.reading = ["Bone Chest", "From: Newcomer", "Source: Level 25 Crypt"]
+        repo = Repo()
+
+        (collected, incomplete, _finished), _module = self.collect(game, repo)
+
+        self.assertEqual((0, 1), (collected, incomplete))
+        self.assertEqual([{"name": "Bone Chest", "player": "", "source": "Level 25 Crypt", "gift": 10}],
+                         repo.incomplete)
+
     def test_a_player_the_site_does_not_know_is_read_from_the_screen(self):
         game = Game([row(10, player=777)])
         game.reading = ["Bone Chest", "From: Newcomer", "Source: Level 25 Crypt"]

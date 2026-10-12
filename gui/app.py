@@ -15,7 +15,8 @@ what a module needs to know about each profile is asked in the profile's
 The run button exists so the whole loop - configure, calibrate, test, fix -
 happens in one place. It runs the collection in a worker thread and streams the
 same log the scheduled run would write, because the useful question after a
-change is always 'would tonight's run work?'.
+change is always 'would tonight's run work?'. Each module's card has a button of
+its own that runs that module alone.
 """
 
 import queue
@@ -458,6 +459,7 @@ class App(ctk.CTk):
         self.log_queue: queue.Queue = queue.Queue()
         self.widgets: Dict[str, Dict[str, object]] = {}
         self.module_status: Dict[str, ctk.CTkLabel] = {}
+        self.module_run_buttons: Dict[str, ctk.CTkButton] = {}
         self.cards: List[AccountCard] = []
         self.worker: Optional[threading.Thread] = None
 
@@ -553,8 +555,15 @@ class App(ctk.CTk):
         for module, section in zip(MODULES, module_sections()):
             block = ctk.CTkFrame(scroll, fg_color=CARD_BG, corner_radius=8)
             block.pack(fill="x", pady=6)
-            ctk.CTkLabel(block, text=module.title, font=ctk.CTkFont(size=15, weight="bold"),
-                         text_color=ACCENT).pack(anchor="w", padx=14, pady=(12, 0))
+            heading = ctk.CTkFrame(block, fg_color="transparent")
+            heading.pack(fill="x", padx=14, pady=(12, 0))
+            ctk.CTkLabel(heading, text=module.title, font=ctk.CTkFont(size=15, weight="bold"),
+                         text_color=ACCENT).pack(side="left")
+            button = ctk.CTkButton(heading, text="▶ Run only this module", width=190,
+                                   fg_color="#238636", hover_color="#2ea043",
+                                   command=lambda m=module: self.run_module(m))
+            button.pack(side="right")
+            self.module_run_buttons[module.key] = button
             ctk.CTkLabel(block, text=module.description, font=ctk.CTkFont(size=11),
                          text_color=MUTED, wraplength=980, justify="left").pack(anchor="w", padx=14, pady=(2, 4))
             status = ctk.CTkLabel(block, text="", font=ctk.CTkFont(size=11), text_color=MUTED,
@@ -786,13 +795,32 @@ class App(ctk.CTk):
                                    "Run the enabled modules now with saved configuration?\n\n"
                                    "The browser will be automated."):
             return
-        force = bool(self.chk_force.get())
+        self._start_run(force=bool(self.chk_force.get()))
 
+    def run_module(self, module):
+        """
+        Runs one module alone, from its card in the Modules tab.
+
+        The button is the answer to 'do just this, now', so neither the schedule
+        nor the module's own switch stands in the way: a once-a-day module that
+        already ran today runs again, and one that is turned off for the
+        scheduled runs can still be run by hand.
+        """
+        if not messagebox.askyesno(module.title,
+                                   f"Run only '{module.title}' now with saved configuration?\n\n"
+                                   "The other modules are left out and the schedule is ignored.\n"
+                                   "The browser will be automated."):
+            return
+        self._start_run(force=True, only=module)
+
+    def _start_run(self, force: bool, only=None):
         def work():
             from core.runner import ModuleRunner, RunnerError
 
             context = self._ensure_context(connect=False)
-            runner = ModuleRunner(context)
+            runner = ModuleRunner(context, modules=[only(context)] if only else None)
+            if only:
+                logger.info(f"Running only '{only.title}' (schedule ignored).")
             try:
                 summary = runner.run(force=force)
                 logger.info(

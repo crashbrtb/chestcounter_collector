@@ -130,6 +130,10 @@ times; the state is kept in `config/module_state.json`. The *Ignore schedule*
 box next to **Run now** (or `--force`) runs everything regardless, which is
 what you want when testing.
 
+Each card also has a **Run only this module** button: it runs that module alone
+on every profile set up for it, ignoring the schedule and the *Enabled* switch
+(the same as `--module KEY --force`, except that a disabled module runs too).
+
 ### Clan chests
 
 Runs on every profile that has a **database**. Everything from *Calibration*
