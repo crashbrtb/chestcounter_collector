@@ -1,3 +1,41 @@
+Next  - A run starts with the profile the game opened on.
+  - The game always comes up on the profile used last. The run followed the configured order all the
+    same: opened on the second profile, it switched to the first and later back to the second - two
+    trips through the profile menu and two loading waits to end up where it started.
+  - Now the banner is read once, right after the game loads and the shop is closed. If it names a
+    profile with something due, that one is collected first, with no switch, and the others follow in
+    their order. A banner that cannot be read, or a profile with nothing due, leaves the order as
+    configured (core/runner.py, core/session.py).
+
+Next  - The clan chests are read from the game's own list, not from the screen.
+  - When the clan window is opened the game sends the list of gifts waiting (route 15000): for each
+    one its id, the id of the player who sent it, the chest type, when it expires and how many chests
+    it is (an epic monster drops up to six at once). Gifts generated during the run are announced one
+    at a time (event 300020), and the game answers once for every chest opened (route 15013). The
+    collector now writes each chest from that - player by id, type by id, generation time to the
+    second - and uses the screen only to find the 'Open' buttons (modules/chests/gifts.py,
+    modules/chests/from_game.py).
+  - Why: measured on a real run of 859 chests, every chest was in the list, in the order the panel
+    shows them, and the screen got one batch of four wrong - the panel was captured before it redrew,
+    so a chest was written twice and another never written. No reading of the screen can catch that;
+    the list does. It also ends names read wrong and members a reading cannot tell apart
+    ('Alok BR' / 'ALOK BR').
+  - A tab ends by asking the game for the list again and making the database agree with it: a gift
+    opened and not written is written, one written and still waiting is taken back.
+  - The game sends a chest's type as a number. The site's new game_chest_types table names each one
+    (chest name and source, linked to the standard_chests row of that source); a type met for the
+    first time is named from the screen, once. A gift is written whole and carries its game ids
+    (game_gift_id, game_type_id, game_player_id in collected_chests), so a run that stopped halfway
+    can be repeated without writing a chest twice.
+  - Needs the clan site with the migrations CreateGameChestTypes and AddGameIdentityToChests. On an
+    older site, and for the Triumphal Gifts tab (empty on every recording made, so how the game lists
+    those is not known yet), the chests are read from the screen as before. New settings in the
+    module: 'Read the chests from the game's own list' (on by default) and 'Wait for the game's list'.
+  - Fixed in the game's codec: the length of each event on the tail of an answer counts its own four
+    bytes. Read the other way, only the first event of each answer was decoded right.
+  - tools/chest_traffic.py records a collection's traffic beside what the screen read and compares
+    the two, chest by chest - the measurement all of this was built on.
+
 Next  - A frozen game in Chrome no longer sinks every run after it.
   - The game sometimes freezes in the browser until F5. The run failed, left that Chrome open,
     and every later run found it, attached to the same frozen tab and failed again, in a loop.

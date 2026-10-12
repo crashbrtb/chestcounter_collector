@@ -37,7 +37,12 @@ try:
 except ImportError:  # pragma: no cover
     cv2 = None
 
+from config.schema import Field
+
 from ..base_module import BaseModule
+from ..events.traffic import TrafficListener
+from .from_game import GameCollection
+from .gifts import PLAIN_GIFT, GiftFeed
 from .steps import REQUIRED_STEPS, STEPS
 
 # The only bound on the loop, and it has to be generous: measured on four months
@@ -261,6 +266,17 @@ class ChestCollector(BaseModule):
                    "A profile without a database is skipped.")
     steps = STEPS
     required_steps = REQUIRED_STEPS
+    settings = (
+        Field("read_from_game", "bool", "Read the chests from the game's own list", True,
+              "Each chest's player, type and hour are taken from what the game sends when the clan window "
+              "is opened, instead of from the screen: no name is misread and no chest is counted twice. "
+              "The screen is still read for a chest type met for the first time, for the Triumphal Gifts "
+              "tab, and for everything when the clan site is too old to hold what the game sends. "
+              "Off: every chest is read from the screen, as before."),
+        Field("answer_wait", "float", "Wait for the game's list (s)", 10.0,
+              "How long to wait for the game to send its list of gifts after the clan window is opened, "
+              "before reading the screen instead.", minimum=2.0, maximum=120.0),
+    )
 
     #: names the database already knows, loaded per profile
     vocabulary: Optional[Vocabulary] = None
@@ -534,8 +550,95 @@ class ChestCollector(BaseModule):
             logger.info(f"Formatting — {field}: '{reading}' recorded as '{found}'.")
         return (found, True) if found else (reading, False)
 
+    def _read_resolved(self, chests: List[dict], scale: float) -> List[List[str]]:
+        """The chests on screen, read and put in the spellings the database knows."""
+        batch = self._read_batch(chests, scale)
+        resolved = [self._resolve(rows) for rows in batch]
+
+        # One unrecognised field is enough to pay for the careful engine -
+        # but only once, and for the whole panel, since it costs the same
+        # for four chests as for one.
+        if any(not ok for _rows, ok in resolved) and self.vocabulary and self.vocabulary.is_useful:
+            logger.info("A field did not match known database entries; re-reading with secondary engine.")
+            batch = self._read_batch(chests, scale, careful=True)
+            resolved = [self._resolve(rows) for rows in batch]
+        return [rows for rows, _ok in resolved]
+
+    # ------------------------------------------------------- the game's list
+    def _listen(self, repo: ChestRepository) -> Tuple[Optional[GiftFeed], Optional[TrafficListener]]:
+        """
+        Starts listening to the game for its list of gifts, before the clan
+        window is opened - the list is sent when it opens.
+
+        (None, None) when the chests are to be read from the screen: the option
+        is off, the database is of a site that cannot hold what the game sends,
+        or the game cannot be listened to.
+        """
+        if not self.options.get("read_from_game", True):
+            return None, None
+        if not repo.can_read_from_game():
+            logger.info(f"[{self.profile_label}] This database has no game_chest_types table or no game "
+                        f"columns in collected_chests (update the site and run its migrations): the chests "
+                        f"are read from the screen.")
+            return None, None
+
+        feed = GiftFeed()
+        listener = TrafficListener(
+            host=self.browser.host, port=self.browser.port, tab_id=self.browser.tab_id,
+            url_filter=self.browser.url_filter, on_record=feed.feed_record,
+            on_status=lambda text: logger.warning(f"Traffic: {text}"),
+        )
+        if not listener.start():
+            logger.warning(f"[{self.profile_label}] Could not listen to the game's traffic: the chests are "
+                           f"read from the screen.")
+            return None, None
+        cancellation.sleep(1.5)   # the listener needs a moment to attach before anything is clicked
+        return feed, listener
+
+    def _reopen_gifts(self) -> bool:
+        """Closes the clan window and opens the gifts again, which makes the game send its list anew."""
+        self.game_state.close_modals()
+        if not self.open_gift_menu():
+            return False
+        self.switch_tab("gifts_tab", "Gifts")
+        return True
+
+    def collect_gifts(self, repo: ChestRepository, feed: Optional[GiftFeed]) -> Tuple[int, int]:
+        """
+        The 'Gifts' tab: from the game's list when it came, from the screen otherwise.
+
+        The screen also takes over whatever the list could not be followed to
+        the end of - it reads what is still showing, as it always did.
+        """
+        label = "Gifts"
+        wait = float(self.options.get("answer_wait", 10.0))
+        if feed is None:
+            return self.collect_tab(label, repo)
+
+        deadline = time.time() + wait
+        while feed.state()[0] == 0 and time.time() < deadline:
+            cancellation.sleep(0.1)
+        if feed.state()[0] == 0:
+            logger.warning(f"[{self.profile_label}] The game did not send its list of gifts when the clan "
+                           f"window was opened: the chests are read from the screen.")
+            return self.collect_tab(label, repo)
+
+        strange = [gift for gift in feed.snapshot() if gift.kind != PLAIN_GIFT]
+        if strange:
+            logger.warning(f"[{self.profile_label}] {len(strange)} gift(s) of a kind not seen before "
+                           f"(e.g. {strange[0]}): they are left to the reading of the screen.")
+
+        collected, incomplete, finished = GameCollection(
+            self, repo, feed, label, self._reopen_gifts, answer_wait=wait).run()
+        if not finished:
+            logger.warning(f"[{self.profile_label}] The game's list could not be followed to the end; "
+                           f"reading what is left of '{label}' from the screen.")
+            more, more_incomplete = self.collect_tab(label, repo)
+            collected, incomplete = collected + more, incomplete + more_incomplete
+        return collected, incomplete
+
     def collect_tab(self, label: str, repo: ChestRepository) -> Tuple[int, int]:
-        """Opens every chest in the tab currently showing."""
+        """Opens every chest in the tab currently showing, reading each one from the screen."""
         chest_delay = float(self.config.section("timing").get("chest_click_delay", 0.25))
         scale = float(self.config.section("ocr").get("capture_scale", 2.0))
 
@@ -552,18 +655,7 @@ class ChestCollector(BaseModule):
             if not chests:
                 break
 
-            batch = self._read_batch(chests, scale)
-            resolved = [self._resolve(rows) for rows in batch]
-
-            # One unrecognised field is enough to pay for the careful engine -
-            # but only once, and for the whole panel, since it costs the same
-            # for four chests as for one.
-            if any(not ok for _rows, ok in resolved) and self.vocabulary and self.vocabulary.is_useful:
-                logger.info("A field did not match known database entries; re-reading with secondary engine.")
-                batch = self._read_batch(chests, scale, careful=True)
-                resolved = [self._resolve(rows) for rows in batch]
-
-            batch = [rows for rows, _ok in resolved]
+            batch = self._read_resolved(chests, scale)
             logger.info(f"{len(chests)} chest(s) on screen, read in one pass.")
 
             # Bottom-up: opening a chest shifts everything BELOW it up, so taking
@@ -621,14 +713,21 @@ class ChestCollector(BaseModule):
             self.vocabulary = (load_vocabulary(connection)
                                if self.config.section("ocr").get("use_known_names", True) else None)
 
-            if not self.open_gift_menu():
-                logger.error(f"[{profile.label}] Clan gift menu did not open.")
-                return {"success": False, "collected": 0, "incomplete": 0, "profile": profile.name,
-                        "reason": "gift menu did not open"}
+            feed, listener = self._listen(repo)
+            try:
+                if not self.open_gift_menu():
+                    logger.error(f"[{profile.label}] Clan gift menu did not open.")
+                    return {"success": False, "collected": 0, "incomplete": 0, "profile": profile.name,
+                            "reason": "gift menu did not open"}
 
-            self.switch_tab("gifts_tab", "Gifts")
-            gifts, gifts_incomplete = self.collect_tab("Gifts", repo)
+                self.switch_tab("gifts_tab", "Gifts")
+                gifts, gifts_incomplete = self.collect_gifts(repo, feed)
+            finally:
+                if listener is not None:
+                    listener.stop()
 
+            # Read from the screen: the tab was empty on every recording made, so
+            # how the game lists a triumphal gift is not known yet.
             triumphal = triumphal_incomplete = 0
             if self.switch_tab("triumphal_gifts_tab", "Triumphal Gifts"):
                 triumphal, triumphal_incomplete = self.collect_tab("Triumphal Gifts", repo)

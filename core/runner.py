@@ -397,7 +397,7 @@ class ModuleRunner:
         siblings = [p.name for p in account.profiles if p.name]
 
         tried = succeeded = 0
-        for profile in self._profiles_of(account, only_profile):
+        for profile in self._active_first(account, self._profiles_of(account, only_profile), siblings, plan):
             if not self._set_up(profile):
                 logger.warning(
                     f"Profile '{profile.label}' has no database and nothing else set up, and was skipped "
@@ -417,6 +417,45 @@ class ModuleRunner:
         if self.ctx.login.enabled:
             self.ctx.login.end_session()
         return succeeded > 0 or tried == 0
+
+    def _active_first(self, account: AccountConfig, profiles: List[ProfileConfig], siblings: List[str],
+                      plan: Plan) -> List[ProfileConfig]:
+        """
+        The profiles in the order to visit them: the one the game opened on first.
+
+        The game always comes up on some profile - the one used last. Followed
+        in the configured order, a run that opened on the second profile switched
+        to the first, then back to the second: two trips through the profile menu
+        and two loading waits to end up where it started. So the banner is read
+        once, with the board already clear, and if it names a profile with
+        something due, that one is done before any switching. The rest keep
+        their order.
+
+        The banner is identified against every profile of the account, so a
+        near-twin that is not due cannot pass for one that is. When it cannot be
+        read, the configured order stands - which is what the run always did.
+        """
+        try:
+            active = self.ctx.profiles.active_among(siblings)
+        except Cancelled:
+            raise
+        except Exception as exc:  # noqa: BLE001 - only the order depends on it
+            logger.warning(f"Could not read which profile the game opened on: {exc}")
+            return profiles
+
+        first = [p for p in profiles if p.name == active and plan.get((account.name, p.name))]
+        if not first:
+            if active:
+                logger.info(f"The game opened on profile '{active}', which has nothing due on this run.")
+            else:
+                logger.info("The profile the game opened on is not one of this account's; "
+                            "following the configured order.")
+            return profiles
+        if profiles[0] is first[0]:
+            return profiles
+        logger.info(f"The game opened on profile '{active}': starting with it, "
+                    f"then the others in their order.")
+        return first[:1] + [p for p in profiles if p is not first[0]]
 
     def _run_profile(self, account: AccountConfig, profile: ProfileConfig, siblings: List[str],
                      tasks: List[BaseModule]) -> bool:
