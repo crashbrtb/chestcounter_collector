@@ -244,7 +244,9 @@ def pack(obj: Any) -> bytes:
 def build_frame(route: int, seq: int, *objects: Any, tail_events: tuple = ()) -> bytes:
     """Monta um frame completo. So para testes."""
     body = pack([route, seq]) + b"".join(pack(o) for o in objects)
-    tail = b"".join(struct.pack("<I", len(e)) + e for e in (pack(ev) for ev in tail_events))
+    # Um evento e uma tupla `(cabecalho, carga...)`; qualquer outra coisa e so o cabecalho.
+    packed = [b"".join(pack(part) for part in (ev if isinstance(ev, tuple) else (ev,))) for ev in tail_events]
+    tail = b"".join(struct.pack("<I", len(e) + 4) + e for e in packed)
     inner = 8 + len(body)
     return struct.pack("<II", inner + len(tail), inner) + body + tail
 
@@ -304,19 +306,38 @@ def iter_frames(buf: bytes, pos: int = 0, end: Optional[int] = None, depth: int 
 
 
 def decode_tail(tail: bytes) -> List[Any]:
-    """Eventos anexados depois do corpo: `[u32 len][msgpack]` repetido."""
-    events: List[Any] = []
+    """O cabecalho de cada evento anexado depois do corpo (ver `tail_events`)."""
+    return [event[0] for event in tail_events(tail)]
+
+
+def tail_events(tail: bytes) -> List[List[Any]]:
+    """Os eventos da cauda por inteiro: `[cabecalho, carga...]` de cada um.
+
+    Um evento e `[u32 len][cabecalho][carga...]`, com o cabecalho
+    `[sessao, seq, hora, codigo]` e a carga (o bau que acabou de chegar ao cla,
+    por exemplo) logo depois, no mesmo bloco. `len` conta os seus proprios 4
+    bytes, como o tamanho total do frame: medido numa gravacao real de
+    11/10/2026, assim os 6930 eventos de 1933 caudas fecham sem sobra nem erro;
+    contando so o conteudo, apenas o primeiro evento de cada cauda era lido certo.
+    Um bloco que nao decodifica ate o fim e ignorado, sem derrubar os outros.
+    """
+    events: List[List[Any]] = []
     pos = 0
     while pos + 4 <= len(tail):
         (n,) = struct.unpack_from("<I", tail, pos)
-        chunk = tail[pos + 4:pos + 4 + n]
-        if n == 0 or len(chunk) != n:
+        chunk = tail[pos + 4:pos + n]
+        if n <= 4 or len(chunk) != n - 4:
             break
+        pos += n
+        u = LEUnpacker(chunk)
+        objects: List[Any] = []
         try:
-            events.append(unpack(chunk))
-        except TBDecodeError:
-            break
-        pos += 4 + n
+            while u.p < len(chunk):
+                objects.append(u.read())
+        except (TBDecodeError, RecursionError):
+            continue
+        if objects:
+            events.append(objects)
     return events
 
 

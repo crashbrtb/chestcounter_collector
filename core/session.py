@@ -462,6 +462,24 @@ class ProfileSwitcher:
             return ""
         return " ".join(line.text for line in self.ocr.read_lines(area)).strip()
 
+    def active_among(self, names: Sequence[str]) -> str:
+        """
+        Which of `names` is the profile on screen, or '' when it is none of them.
+
+        The game opens on whichever profile was used last, so the runner asks
+        this once, right after the board is clear, to start with that profile
+        instead of switching away from it and back later. The same two tests as
+        `is_active` apply - win the competition, and be spelled out in the
+        banner - because a wrong answer here would only reorder the run, but the
+        answer is logged and should not name a profile that is not there.
+        """
+        area = self.calibration.region("profile_name_display_area")
+        candidates = list(dict.fromkeys(name for name in names if name))
+        if not area or not candidates:
+            return ""
+        winner, text = self.ocr.identify(area, candidates)
+        return winner if winner and contains_name(winner, text) else ""
+
     def is_active(self, profile_name: str, siblings: Sequence[str] = ()) -> bool:
         """
         Is `profile_name` the profile on screen?

@@ -111,6 +111,9 @@ class FakeProfiles:
     def is_active(self, name, _siblings=()):
         return self.active == name
 
+    def active_among(self, names):
+        return self.active if self.active in names else ""
+
     def active_profile_name(self):
         return self.active or ""
 

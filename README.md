@@ -443,6 +443,49 @@ default 0.25s). Because chests are clicked bottom-up — opening a chest only sh
 items below it — there is no need to wait for the entire list to re-settle between
 clicks.
 
+### Reading the Chests from the Game's Own List
+
+The screen is no longer where a chest's data comes from. When the clan window is
+opened the game sends the list of gifts that are waiting, and the collector
+listens to it (the same way the *Clan members* and *Tournament rankings* modules
+listen): for each gift its id, the id of the player who sent it, the chest type,
+the moment it expires and how many chests it is. The screen is still what gets
+clicked — there is no other way to open a chest — but it is only read to find
+the **Open** buttons.
+
+| | From the screen | From the game's list |
+|---|---|---|
+| Player | name read by OCR, matched to the member list | the player's id in the game (`members.game_player_id`) |
+| Chest and source | text read by OCR, matched to known spellings | the chest type id, named by `game_chest_types` |
+| Generation time | countdown in whole minutes | expiry to the second, minus the chest's twenty hours |
+| A chest counted twice or missed | cannot be noticed | the list is asked for again at the end and the database is made to agree with it |
+
+Measured on a real collection of 859 chests recorded both ways
+(`tools/chest_traffic.py`): every chest was in the list, in the order the panel
+shows them, and the screen had one batch of four wrong — the panel was captured
+a moment before it redrew, so one chest was written twice and another not at all.
+
+What it needs, and what happens without it:
+
+- **The clan site's database** must have the `game_chest_types` table and the
+  `game_gift_id`, `game_type_id` and `game_player_id` columns of
+  `collected_chests` (site migrations `CreateGameChestTypes` and
+  `AddGameIdentityToChests`). On an older site the collector says so in the log
+  and reads the screen as before.
+- **A chest type met for the first time** is named from the screen, once, and
+  written to `game_chest_types`. The reading is believed only when its countdown
+  agrees with the gift's own expiry; otherwise the chest goes to the review queue
+  with its picture and the ids the game did send.
+- **`game_chest_types` and `standard_chests` are two tables on purpose.**
+  `standard_chests` has one row per *source* — what the clan scores — and a
+  source gives several chests (a *Level 25 Crypt* alone has twelve), each with
+  its own type id in the game. A type points at the row of its source, and takes
+  that row's spelling when the chest is written, since the scoring joins on it.
+- **The Triumphal Gifts tab** is still read from the screen: it was empty on
+  every recording made, so how the game lists those gifts is not known yet.
+- The module setting **Read the chests from the game's own list** turns all of
+  this off, and every chest is read from the screen again.
+
 ### Database-Assisted OCR Correction
 
 A clan environment is a bounded dataset: a few hundred members, around ninety

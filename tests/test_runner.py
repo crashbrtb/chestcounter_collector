@@ -87,6 +87,26 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual(["Alpha"], self.events.began)
         self.assertEqual({"chests"}, {r["module"] for r in self.chests.ended["results"]})
 
+    def test_the_profile_the_game_opened_on_is_done_first(self):
+        runner = self.runner()
+        self.ctx.profiles.active = "Beta"
+        runner.run()
+
+        self.assertEqual([("chests", "Beta"), ("chests", "Alpha"), ("events", "Alpha")], self.log)
+        self.assertEqual(["Beta", "Alpha"], self.ctx.profiles.switched)
+
+    def test_a_profile_the_game_opened_on_with_nothing_due_does_not_change_the_order(self):
+        runner = self.runner()
+        self.ctx.profiles.active = "Beta"
+        runner.run(only_modules=["events"])
+        self.assertEqual([("events", "Alpha")], self.log)
+
+        runner = self.runner()
+        self.ctx.profiles.active = "Someone else"
+        self.log.clear()
+        runner.run(force=True)
+        self.assertEqual([("chests", "Alpha"), ("events", "Alpha"), ("chests", "Beta")], self.log)
+
     # ---------------------------------------------------------- the schedule
     def test_the_daily_module_runs_once_a_day_and_the_other_every_time(self):
         self.runner().run()
