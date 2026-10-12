@@ -78,6 +78,35 @@ class AppTest(unittest.TestCase):
         self.assertIn("Disabled", self.app.module_status["events"].cget("text"))
         self.assertNotIn("Tournament rankings", self.app.lbl_info.cget("text"))
 
+    def test_each_card_runs_its_module_alone_ignoring_the_schedule(self):
+        from fakes import FakeBrowser, FakeContext
+
+        self.assertEqual([m.key for m in MODULES], list(self.app.module_run_buttons))
+        runs = []
+
+        class Runner:
+            def __init__(self, context, modules=None):
+                self.modules = modules
+
+            def run(self, force=False):
+                runs.append(([m.key for m in self.modules] if self.modules else None, force))
+                return {"collected": 0, "failures": [], "duration": "0"}
+
+        self.app._run_in_background = lambda target, **options: target()
+        for answer, expected in ((False, []), (True, [(["members"], True)])):
+            self.app.context = FakeContext(self.config, self.app.calibration, browser=FakeBrowser())
+            with mock.patch.object(gui_app.messagebox, "askyesno", lambda *a, **k: answer), \
+                    mock.patch("core.runner.ModuleRunner", Runner):
+                self.app.module_run_buttons["members"].invoke()
+            self.assertEqual(expected, runs)
+
+        # Run now is still every enabled module, on its schedule.
+        self.app.context = FakeContext(self.config, self.app.calibration, browser=FakeBrowser())
+        with mock.patch.object(gui_app.messagebox, "askyesno", lambda *a, **k: True), \
+                mock.patch("core.runner.ModuleRunner", Runner):
+            self.app.run_collection()
+        self.assertEqual((None, False), runs[-1])
+
     def test_each_profile_is_asked_for_its_own_site_and_token(self):
         card = self.app.cards[0]
         alpha, beta = card.rows

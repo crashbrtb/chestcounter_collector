@@ -45,8 +45,10 @@ When the screen is needed
 The game sends a chest's type as a number. A type met for the first time is
 named from the screen - once, into `game_chest_types` - and so is a player the
 site's member list does not know yet. The reading is only believed when its
-countdown agrees with the gift's own expiry; otherwise the chest goes to the
-review queue with its picture and what the game did say about it.
+countdown agrees with the gift's own expiry - or, where the capture holds no
+countdown at all, when every line of the batch names the player the game gave
+for it; otherwise the chest goes to the review queue with its picture and what
+the game did say about it.
 """
 
 import time
@@ -236,12 +238,19 @@ class GameCollection:
             crops = module._crops if len(module._crops) == len(chests) else [None] * len(chests)
             minutes = module._minutes_left if len(module._minutes_left) == len(chests) else [None] * len(chests)
 
+            # A chest area calibrated around the text alone leaves every countdown
+            # out of the capture. The players then vouch for the lines instead.
+            vouched = all(left is None for left in minutes) and self._players_agree(head, batch)
+
             unmatched = []
             for gift, rows, crop, left in zip(head, batch, crops, minutes):
                 if readings.get(gift.gift_id, {}).get("chest"):
                     continue
                 reading = {"crop": crop, "chest": "", "player": "", "source": ""}
-                fits = left is not None and abs(gift.expires_at - (read_at + left * 60)) <= COUNTDOWN_TOLERANCE
+                if left is None:
+                    fits = vouched and gift.player_id in self.players
+                else:
+                    fits = abs(gift.expires_at - (read_at + left * 60)) <= COUNTDOWN_TOLERANCE
                 if fits and len(rows) >= 3:
                     reading.update(chest=rows[0].strip(), player=parse_key_value_line(rows[1])[1],
                                    source=parse_key_value_line(rows[2])[1])
@@ -257,6 +266,28 @@ class GameCollection:
                     logger.warning(f"[{module.profile_label}] The screen could not be matched to gift "
                                    f"{gift.gift_id} (read={rows}, countdown={left} min).")
         return readings
+
+    def _players_agree(self, head: List[Gift], batch: List[List[str]]) -> bool:
+        """
+        Whether every line of the batch names the player the game gave for its
+        place in the list - what stands in for the countdown when none was read.
+
+        A panel caught before it redrew shows the chests of a moment ago, and
+        their players with them: one line out of place is enough to refuse the
+        whole batch. A player the site does not know proves nothing either way,
+        and at least one line has to be checked for the batch to pass.
+        """
+        checked = 0
+        for gift, rows in zip(head, batch):
+            if len(rows) < 3:
+                return False
+            known = self.players.get(gift.player_id)
+            if not known:
+                continue
+            if parse_key_value_line(rows[1])[1].strip().casefold() != known.strip().casefold():
+                return False
+            checked += 1
+        return checked > 0
 
     def _write(self, gift: Gift, reading: Optional[dict] = None) -> None:
         """Writes every chest of a gift, naming whatever the game sent only as a number."""
