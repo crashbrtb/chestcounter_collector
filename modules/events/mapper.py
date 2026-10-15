@@ -35,6 +35,7 @@ try:
 except ImportError:  # pragma: no cover
     cv2 = None
 
+from core.vision import changed_fraction
 from utils.cancel import cancellation
 
 from . import journal
@@ -79,7 +80,12 @@ class MapperOptions:
     step_delay: float = 1.2
     names_timeout: float = 40.0
     names_delay: float = 0.8
-    names_stalls: int = 4   # scrolls in a row that bring no new name before giving up
+    names_stalls: int = 4   # scrolls in a row that neither move the list nor bring a name before giving up
+    names_max_time: float = 300.0   # the whole walk down one ranking, at most
+    # The game moves the ranking a small fixed step per wheel event, whatever
+    # its delta: each scroll is a burst of this many events, repeated until the
+    # list stops moving (turning past the end does nothing).
+    names_wheel_turns: int = 30
     # Look back only to this moment (UTC seconds): the Journal lists the newest
     # first, so once `stop_after_older` tournaments in a row ended before it,
     # the rest is older still and was covered by an earlier search. None walks
@@ -147,6 +153,8 @@ class JournalMapper:
         self._older_streak = 0
         self._old_cards = 0
         self._ages_read = 0
+        # Whether the last turn of page was confirmed by the page number on screen.
+        self._page_number_moved = False
 
     # --------------------------------------------------------------- control
     def _log(self, text: str) -> None:
@@ -193,7 +201,10 @@ class JournalMapper:
                         self.finish_reason = FINISH_END
                         self._log(f"Page {page}: no title read. End.")
                     break
-                if signature == previous_signature:
+                # A run of the same message can fill whole pages with the same
+                # titles: only when the page number cannot be read does that mean
+                # the arrow stopped moving.
+                if signature == previous_signature and not self._page_number_moved:
                     self.finish_reason = FINISH_END
                     self._log(f"Page {page} is the same as the previous one: last page reached.")
                     break
@@ -279,10 +290,12 @@ class JournalMapper:
         self.browser.click(*point)
         self._sleep(self.options.step_delay)
 
+        self._page_number_moved = False
         if page_region:
             after_page = parse_page_number(self.ocr.read(self.browser.capture(page_region, scale=2.0), True))
             if before_page is not None and after_page is not None:
-                return after_page != before_page
+                self._page_number_moved = after_page != before_page
+                return self._page_number_moved
         after = self.browser.capture(self.layout.card_title_region(0), scale=1.0)
         if before is None or after is None:
             return True
@@ -397,15 +410,29 @@ class JournalMapper:
         region = self.layout.region("journal_ranking_list")
         self._log(f"  {len(missing)} player(s) without a name: " + ("scrolling the ranking list..." if region else
                   "waiting for the profiles (calibrate 'Journal: ranking list' so the list can be scrolled)"))
-        deadline = time.time() + self.options.names_timeout
+        # The timeout counts only the time without progress: a long ranking takes
+        # many wheel turns to walk, and while the list still moves or names still
+        # come it is not stuck. `names_max_time` caps the whole walk regardless.
+        started = time.time()
+        deadline = started + self.options.names_timeout
         stalls = 0
-        while missing and stalls < self.options.names_stalls and time.time() < deadline:
+        while (missing and stalls < self.options.names_stalls and time.time() < deadline
+               and time.time() - started < self.options.names_max_time):
             before = len(missing)
+            moved = False
             if region is not None:
-                self.browser.scroll(region[0] + region[2] // 2, region[1] + region[3] // 2, region[3] * 0.8)
+                view_before = self.browser.capture(region, scale=1.0)
+                self.browser.scroll(region[0] + region[2] // 2, region[1] + region[3] // 2, delta_y=600,
+                                    repetitions=self.options.names_wheel_turns, delay=0.05)
             self._sleep(self.options.names_delay)
+            if region is not None:
+                moved = changed_fraction(view_before, self.browser.capture(region, scale=1.0)) >= 0.01
             missing = self.collector.missing_profiles(uid)
-            stalls = stalls + 1 if len(missing) >= before else 0
+            if moved or len(missing) < before:
+                stalls = 0
+                deadline = time.time() + self.options.names_timeout
+            else:
+                stalls += 1
         if missing:
             self._log(f"  {len(missing)} name(s) still missing; this ranking goes to the site for review.")
         else:

@@ -49,6 +49,15 @@ class ExtractTournamentNameTest(unittest.TestCase):
         self.assertEqual(extract_tournament_name("| Your Clanmates' scores in Epic Hunt"), "Epic Hunt")
         self.assertEqual(extract_tournament_name("a Your Clanmates' scores in Epic Hunt"), "Epic Hunt")
 
+    def test_the_divider_above_the_card_before_the_title(self):
+        # Read off the game, from a title region that took the line between two cards.
+        self.assertEqual(extract_tournament_name(
+            "SSS + ��== SSS Your Clanmates' results in the Ragnarók tournament. . emaAars 14.71"),
+            "Ragnarók tournament")
+        self.assertEqual(extract_tournament_name("DS . DS Your Clanmates' results in the Ragnarók tournament."),
+                         "Ragnarók tournament")
+        self.assertEqual(extract_tournament_name("today, 14:02 Your Clanmates' results in Epic Hunt"), "Epic Hunt")
+
 
 class CardAgeTest(unittest.TestCase):
     def test_reads_how_many_days_ago_a_card_was_received(self):

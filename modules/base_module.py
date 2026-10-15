@@ -34,7 +34,7 @@ from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 from config.schema import Field, Section, module_section_key
 from config.settings import ProfileConfig
 from core.calibration import Step
-from core.schedule import SCHEDULE_DAILY, SCHEDULE_EVERY_RUN, SCHEDULES
+from core.schedule import DEFAULT_DAY_START, SCHEDULE_DAILY, SCHEDULE_EVERY_RUN, SCHEDULES
 
 
 class ModuleAction(NamedTuple):
@@ -51,6 +51,7 @@ class BaseModule(ABC):
     description: str = ""
     default_enabled: bool = True
     default_schedule: str = SCHEDULE_EVERY_RUN
+    default_day_start: str = DEFAULT_DAY_START
     settings: Sequence[Field] = ()
     profile_fields: Sequence[Field] = ()
     steps: Sequence[Step] = ()
@@ -101,6 +102,9 @@ class BaseModule(ABC):
             Field("daily_attempts", "int", "Attempts per day", 3,
                   f"Only for '{SCHEDULE_DAILY}': a run that fails is tried again on the next runs "
                   f"of the same day, up to this many times.", minimum=1, maximum=24),
+            Field("day_start", "str", "Game day starts at (HH:MM)", cls.default_day_start,
+                  f"Only for '{SCHEDULE_DAILY}': the time, on this computer's clock, the game's day "
+                  f"turns. A run before it still counts as the previous day."),
         ]
         return Section(module_section_key(cls.key), cls.title, cls.description, common + list(cls.settings))
 

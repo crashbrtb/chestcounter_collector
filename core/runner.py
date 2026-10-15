@@ -213,6 +213,7 @@ class ModuleRunner:
                     due, why = (True, "") if force else self.schedule.is_due(
                         module.key, str(module.options.get("schedule", SCHEDULE_EVERY_RUN)),
                         account.name, profile.name, int(module.options.get("daily_attempts", 3)),
+                        str(module.options.get("day_start") or module.default_day_start),
                     )
                     if due:
                         tasks.append(module)
@@ -494,7 +495,8 @@ class ModuleRunner:
             outcome[module.key] = False
             self._record_failure(account, profile, "all attempts failed", module)
         for module in tasks:
-            self.schedule.record(module.key, account.name, profile.name, outcome.get(module.key, False))
+            self.schedule.record(module.key, account.name, profile.name, outcome.get(module.key, False),
+                                 str(module.options.get("day_start") or module.default_day_start))
         return any(outcome.values())
 
     def _run_module(self, module: BaseModule, account: AccountConfig, profile: ProfileConfig,

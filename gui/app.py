@@ -287,12 +287,12 @@ class ProfileRow(ctk.CTkFrame):
         if profile.enabled:
             self.enabled.select()
 
-        self.name = ctk.CTkEntry(self, placeholder_text="Profile name as shown in the game", width=260)
+        self.name = ctk.CTkEntry(self, placeholder_text="Profile name as shown in the game", width=220)
         self.name.insert(0, profile.name)
         self.name.pack(side="left", padx=4, pady=8)
 
         self.lbl_database = ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=11),
-                                         text_color=MUTED, anchor="w", width=250)
+                                         text_color=MUTED, anchor="w", width=180)
         self.lbl_database.pack(side="left", padx=8, fill="x", expand=True)
 
         ctk.CTkButton(self, text="Database…", width=80, fg_color="#21262d",
@@ -365,11 +365,11 @@ class AccountCard(ctk.CTkFrame):
         if account.enabled:
             self.enabled.select()
 
-        self.name = labelled_entry(header, "Account name", 190,
+        self.name = labelled_entry(header, "Account name", 160,
                                    placeholder_text="a name only you see")
         self.name.insert(0, account.name)
 
-        self.login = labelled_entry(header, "Game login (email or username)", 250,
+        self.login = labelled_entry(header, "Game login (email or username)", 210,
                                     placeholder_text="what you type in the game")
         self.login.insert(0, account.login)
 
@@ -379,7 +379,7 @@ class AccountCard(ctk.CTkFrame):
                      text_color=MUTED).pack(anchor="w")
         password_row = ctk.CTkFrame(password_column, fg_color="transparent")
         password_row.pack(anchor="w")
-        self.password = ctk.CTkEntry(password_row, show="*", width=170,
+        self.password = ctk.CTkEntry(password_row, show="*", width=150,
                                      placeholder_text="game password")
         self.password.insert(0, account.password)
         self.password.pack(side="left")
@@ -387,20 +387,20 @@ class AccountCard(ctk.CTkFrame):
                                            command=self._toggle_password)
         self.show_password.pack(side="left", padx=(4, 0))
 
-        ctk.CTkButton(header, text="Remove account", width=120, fg_color="#21262d",
+        ctk.CTkButton(header, text="Remove account", width=0, fg_color="#21262d",
                       hover_color=ERROR_COLOR,
                       command=lambda: self.on_remove(self)).pack(side="right", pady=(17, 0))
 
         second = ctk.CTkFrame(self, fg_color="transparent")
         second.pack(fill="x", padx=12, pady=(6, 0))
-        self.browser_profile = labelled_entry(second, "Browser profile", 190,
+        self.browser_profile = labelled_entry(second, "Browser profile", 160,
                                               placeholder_text="empty = default profile")
         self.browser_profile.insert(0, account.browser_profile)
         ctk.CTkLabel(second,
                      text="Only needed for multiple accounts: each keeps its own session in a folder, "
                           "avoiding email verification codes.",
                      font=ctk.CTkFont(size=11), text_color=MUTED,
-                     wraplength=560, justify="left").pack(side="left", padx=10, pady=(17, 0))
+                     wraplength=480, justify="left").pack(side="left", padx=10, pady=(17, 0))
 
         ctk.CTkLabel(self, text="Profiles (cities) for this account, collected in this order:",
                      font=ctk.CTkFont(size=11), text_color=MUTED).pack(anchor="w", padx=14, pady=(10, 2))
@@ -409,8 +409,8 @@ class AccountCard(ctk.CTkFrame):
         headings = ctk.CTkFrame(self, fg_color="transparent")
         headings.pack(fill="x", padx=12)
         for text, width, padding in (("Active", 28, (10, 4)),
-                                     ("Profile name (exactly as the game shows it)", 260, (4, 4)),
-                                     ("Database", 250, (8, 8))):
+                                     ("Profile name (exactly as the game shows it)", 220, (4, 4)),
+                                     ("Database", 180, (8, 8))):
             ctk.CTkLabel(headings, text=text, width=width, anchor="w",
                          font=ctk.CTkFont(size=11), text_color=MUTED).pack(side="left", padx=padding)
 
@@ -464,8 +464,8 @@ class App(ctk.CTk):
         self.worker: Optional[threading.Thread] = None
 
         self.title("Total Battle Chest Collector — Configuration")
-        self.geometry("1180x820")
-        self.minsize(1000, 700)
+        self.geometry("940x660")
+        self.minsize(900, 520)
 
         self._build()
         logger.addHandler(LogPipe(self.log_queue))
@@ -500,21 +500,21 @@ class App(ctk.CTk):
         top = ctk.CTkFrame(parent, fg_color="transparent")
         top.pack(fill="x", padx=8, pady=(10, 6))
 
-        ctk.CTkButton(top, text="1 · Open game in Chrome", width=200, height=38,
+        ctk.CTkButton(top, text="1 · Open game in Chrome", width=0, height=34,
                       command=self.connect_browser).pack(side="left", padx=4)
-        ctk.CTkButton(top, text="2 · Calibrate", width=150, height=38,
+        ctk.CTkButton(top, text="2 · Calibrate", width=0, height=34,
                       command=self.open_calibration).pack(side="left", padx=4)
-        ctk.CTkButton(top, text="3 · Verify configuration", width=200, height=38,
+        ctk.CTkButton(top, text="3 · Verify configuration", width=0, height=34,
                       fg_color="#21262d", command=self.check_configuration).pack(side="left", padx=4)
-        self.btn_run = ctk.CTkButton(top, text="▶ Run now", width=150, height=38,
+        self.btn_run = ctk.CTkButton(top, text="▶ Run now", width=110, height=34,
                                      fg_color="#238636", hover_color="#2ea043", command=self.run_collection)
         self.btn_run.pack(side="right", padx=4)
-        self.btn_stop = ctk.CTkButton(top, text="■ Stop", width=100, height=38, state="disabled",
+        self.btn_stop = ctk.CTkButton(top, text="■ Stop", width=70, height=34, state="disabled",
                                       fg_color="#21262d", hover_color=ERROR_COLOR, command=self.stop_run)
         self.btn_stop.pack(side="right", padx=4)
         # A once-a-day module that already ran today is otherwise left out of a
         # run started here, which is the last thing wanted when testing it.
-        self.chk_force = ctk.CTkCheckBox(top, text="Ignore schedule", font=ctk.CTkFont(size=11), width=120)
+        self.chk_force = ctk.CTkCheckBox(top, text="Ignore schedule", font=ctk.CTkFont(size=11), width=0)
         self.chk_force.pack(side="right", padx=8)
 
         info = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=8)
@@ -533,7 +533,7 @@ class App(ctk.CTk):
         ctk.CTkLabel(footer,
                      text="Hold ESC to cancel an ongoing run from any window.  ·  To schedule, point Windows Task Scheduler to run.bat.",
                      font=ctk.CTkFont(size=11), text_color=MUTED).pack(side="left")
-        ctk.CTkButton(footer, text="Open logs folder", width=150, fg_color="#21262d",
+        ctk.CTkButton(footer, text="Open logs folder", width=0, fg_color="#21262d",
                       command=lambda: webbrowser.open(self.config_manager.resolved_log_dir())
                       ).pack(side="right")
 
@@ -544,9 +544,9 @@ class App(ctk.CTk):
         ctk.CTkLabel(toolbar,
                      text="What a run does. Each module is turned on or off here and runs on every profile "
                           "that has what it needs (Accounts and profiles).",
-                     font=ctk.CTkFont(size=12), text_color=MUTED, wraplength=760,
+                     font=ctk.CTkFont(size=12), text_color=MUTED, wraplength=560,
                      justify="left").pack(side="left")
-        ctk.CTkButton(toolbar, text="💾 Save modules", width=180,
+        ctk.CTkButton(toolbar, text="💾 Save modules", width=0,
                       command=self.save_parameters).pack(side="right", padx=4)
 
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
@@ -559,15 +559,15 @@ class App(ctk.CTk):
             heading.pack(fill="x", padx=14, pady=(12, 0))
             ctk.CTkLabel(heading, text=module.title, font=ctk.CTkFont(size=15, weight="bold"),
                          text_color=ACCENT).pack(side="left")
-            button = ctk.CTkButton(heading, text="▶ Run only this module", width=190,
+            button = ctk.CTkButton(heading, text="▶ Run only this module", width=0,
                                    fg_color="#238636", hover_color="#2ea043",
                                    command=lambda m=module: self.run_module(m))
             button.pack(side="right")
             self.module_run_buttons[module.key] = button
             ctk.CTkLabel(block, text=module.description, font=ctk.CTkFont(size=11),
-                         text_color=MUTED, wraplength=980, justify="left").pack(anchor="w", padx=14, pady=(2, 4))
+                         text_color=MUTED, wraplength=740, justify="left").pack(anchor="w", padx=14, pady=(2, 4))
             status = ctk.CTkLabel(block, text="", font=ctk.CTkFont(size=11), text_color=MUTED,
-                                  wraplength=980, justify="left", anchor="w")
+                                  wraplength=740, justify="left", anchor="w")
             status.pack(anchor="w", padx=14, pady=(0, 8))
             self.module_status[module.key] = status
 
@@ -584,7 +584,7 @@ class App(ctk.CTk):
                                   ).pack(side="left")
                     if action.help:
                         ctk.CTkLabel(actions, text=action.help, font=ctk.CTkFont(size=11), text_color=MUTED,
-                                     wraplength=700, justify="left").pack(side="left", padx=12)
+                                     wraplength=520, justify="left").pack(side="left", padx=12)
             ctk.CTkFrame(block, fg_color="transparent", height=10).pack()
 
     def run_module_action(self, module, action):
@@ -604,9 +604,9 @@ class App(ctk.CTk):
         toolbar.pack(fill="x", padx=8, pady=(10, 4))
         ctk.CTkLabel(toolbar, text="Parameters every module shares. Hover over descriptions to understand each one.",
                      font=ctk.CTkFont(size=12), text_color=MUTED).pack(side="left")
-        ctk.CTkButton(toolbar, text="Restore defaults", width=160, fg_color="#21262d",
+        ctk.CTkButton(toolbar, text="Restore defaults", width=0, fg_color="#21262d",
                       command=self.restore_defaults).pack(side="right", padx=4)
-        ctk.CTkButton(toolbar, text="💾 Save parameters", width=180,
+        ctk.CTkButton(toolbar, text="💾 Save parameters", width=0,
                       command=self.save_parameters).pack(side="right", padx=4)
 
         scroll = ctk.CTkScrollableFrame(parent, fg_color="transparent")
@@ -618,7 +618,7 @@ class App(ctk.CTk):
             ctk.CTkLabel(block, text=section.label, font=ctk.CTkFont(size=15, weight="bold"),
                          text_color=ACCENT).pack(anchor="w", padx=14, pady=(12, 0))
             ctk.CTkLabel(block, text=section.description, font=ctk.CTkFont(size=11),
-                         text_color=MUTED, wraplength=980, justify="left").pack(anchor="w", padx=14, pady=(2, 8))
+                         text_color=MUTED, wraplength=740, justify="left").pack(anchor="w", padx=14, pady=(2, 8))
 
             self.widgets[section.key] = {}
             for spec in section.fields:
@@ -628,8 +628,8 @@ class App(ctk.CTk):
         row = ctk.CTkFrame(parent, fg_color="transparent")
         row.pack(fill="x", padx=14, pady=3)
 
-        ctk.CTkLabel(row, text=spec.label, width=260, anchor="w",
-                     font=ctk.CTkFont(size=12)).pack(side="left")
+        ctk.CTkLabel(row, text=spec.label, width=200, anchor="w",
+                     font=ctk.CTkFont(size=12), wraplength=195, justify="left").pack(side="left")
 
         value = self.config_manager.get(section_key, spec.key, spec.default)
         if spec.type == "bool":
@@ -638,17 +638,17 @@ class App(ctk.CTk):
                 widget.select()
             widget.pack(side="left")
         elif spec.type == "choice":
-            widget = ctk.CTkOptionMenu(row, values=list(spec.choices), width=190)
+            widget = ctk.CTkOptionMenu(row, values=list(spec.choices), width=170)
             widget.set(str(value))
             widget.pack(side="left")
         else:
-            widget = ctk.CTkEntry(row, width=320, show="*" if spec.is_secret else "")
+            widget = ctk.CTkEntry(row, width=240, show="*" if spec.is_secret else "")
             widget.insert(0, "" if value is None else str(value))
             widget.pack(side="left")
 
         if spec.help:
             # A text box leaves less room beside it than a checkbox or a dropdown does.
-            room = 520 if spec.type in ("bool", "choice") else 420
+            room = 440 if spec.type in ("bool", "choice") else 320
             ctk.CTkLabel(row, text=spec.help, font=ctk.CTkFont(size=11), text_color=MUTED,
                          wraplength=room, justify="left", anchor="w").pack(side="left", padx=12, fill="x", expand=True)
 
@@ -661,11 +661,11 @@ class App(ctk.CTk):
         ctk.CTkLabel(toolbar,
                      text="Each account is a game login; each profile is a city within it. "
                           "Collection follows this order: account, then its profiles.",
-                     font=ctk.CTkFont(size=12), text_color=MUTED, wraplength=700,
+                     font=ctk.CTkFont(size=12), text_color=MUTED, wraplength=500,
                      justify="left").pack(side="left")
-        ctk.CTkButton(toolbar, text="+ New account", width=140, fg_color="#21262d",
+        ctk.CTkButton(toolbar, text="+ New account", width=0, fg_color="#21262d",
                       command=self.add_account).pack(side="right", padx=4)
-        ctk.CTkButton(toolbar, text="💾 Save accounts", width=160,
+        ctk.CTkButton(toolbar, text="💾 Save accounts", width=0,
                       command=self.save_accounts).pack(side="right", padx=4)
 
         self.accounts_box = ctk.CTkScrollableFrame(parent, fg_color="transparent")
