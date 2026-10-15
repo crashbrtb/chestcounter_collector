@@ -4,14 +4,14 @@ import os
 import sys
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.schema import all_sections, field_for  # noqa: E402
 from config.settings import ConfigManager  # noqa: E402
 from core.calibration import SHARED_GROUP, Calibration, Step, StepGroup  # noqa: E402
-from core.schedule import SCHEDULE_DAILY, SCHEDULE_EVERY_RUN  # noqa: E402
+from core.schedule import SCHEDULE_DAILY, SCHEDULE_EVERY_RUN, game_day, parse_day_start  # noqa: E402
 from fakes import Clock, make_calibration, make_config, make_schedule  # noqa: E402
 from modules.registry import MODULES, calibration_scope, step_groups  # noqa: E402
 
@@ -177,10 +177,32 @@ class ScheduleTest(unittest.TestCase):
             self.schedule.record("events", "Main", "Alpha", False)
         due, why = self.schedule.is_due("events", SCHEDULE_DAILY, "Main", "Alpha", 2)
         self.assertFalse(due)
-        self.assertIn("tomorrow", why)
+        self.assertIn("next day", why)
 
         self.clock.now += timedelta(days=1)
         self.assertTrue(self.schedule.is_due("events", SCHEDULE_DAILY, "Main", "Alpha", 2)[0])
+
+    def test_the_day_turns_at_the_games_day_start(self):
+        due = lambda: self.schedule.is_due("events", SCHEDULE_DAILY, "Main", "Alpha", 3, "14:00")[0]  # noqa: E731
+        self.clock.now = datetime(2026, 10, 7, 15, 0)
+        self.schedule.record("events", "Main", "Alpha", True, "14:00")
+
+        # Past midnight it is still the game day that began at 14:00.
+        self.clock.now = datetime(2026, 10, 8, 10, 0)
+        self.assertFalse(due())
+        self.clock.now = datetime(2026, 10, 8, 13, 59)
+        self.assertFalse(due())
+        self.clock.now = datetime(2026, 10, 8, 14, 0)
+        self.assertTrue(due())
+
+    def test_day_start_parsing(self):
+        self.assertEqual(time(14, 0), parse_day_start("14:00"))
+        self.assertEqual(time(9, 30), parse_day_start(" 9:30 "))
+        self.assertEqual(time(14, 0), parse_day_start("14"))
+        self.assertEqual(time(0, 0), parse_day_start("25:00"))
+        self.assertEqual(time(0, 0), parse_day_start("afternoon"))
+        self.assertEqual(datetime(2026, 10, 6).date(), game_day(datetime(2026, 10, 7, 13, 59), "14:00"))
+        self.assertEqual(datetime(2026, 10, 7).date(), game_day(datetime(2026, 10, 7, 14, 0), "14:00"))
 
 
 if __name__ == "__main__":

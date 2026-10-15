@@ -16,8 +16,10 @@ from typing import Optional
 #
 # Only at the start of the title ("Raid canceled. None of your clanmates joined
 # you" is not a tournament), allowing a stray mark or one or two letters OCR
-# picks up from the card border before it.
-_START = r"^[^\w]*(?:\w{1,2}[^\w]+)?"
+# picks up from the card border before it. Or anywhere, when it starts with a
+# capital as a title does: a title region that also takes the divider above the
+# card reads it as "SSS + == SSS Your Clanmates' ...".
+_START = r"(?:^[^\w]*(?:\w{1,2}[^\w]+)?|(?<!\w)(?=(?-i:[A-Z])))"
 _CLANMATES = re.compile(
     _START + r"your\s*cla[nm]{1,2}\s*-?\s*mates?\s*['’`´]?\s*s?\s*\S*?\s*(?:in\s*the|in|inthe)\s+(.+)",
     re.IGNORECASE,
@@ -44,6 +46,9 @@ _TRAILING = re.compile(
     r")",
     re.IGNORECASE,
 )
+# The same, when the OCR garbles the day ("today, 14:01" read "emaAars 14.71"):
+# whatever follows the title's closing period and ends in a time.
+_DATE_LINE = re.compile(r"\.\s+[^.]*?\d{1,2}[:.]\d{2}\W*$")
 
 
 # How long ago the card was received, in whole days. The last one in the title
@@ -85,7 +90,7 @@ def extract_tournament_name(text: str) -> Optional[str]:
     for pattern in (_CLANMATES, _CLANMATES_PT, _CLANMATES_ANY):
         match = pattern.search(clean)
         if match:
-            name = match.group(1)
+            name = _DATE_LINE.sub("", match.group(1))
             # Only after the name: a tournament could be called "Today's Trial".
             when = next((m for m in _TRAILING.finditer(name) if m.start() > 0), None)
             if when is not None:

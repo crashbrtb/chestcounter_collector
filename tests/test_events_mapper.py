@@ -69,6 +69,7 @@ class FakeGame:
         self.stuck_on_close = False
         self.visible_rows = 2        # players on screen when the ranking opens
         self.scrolls = 0
+        self.list_end = 100          # scrolls before the ranking list stops moving
         self.profiles_on_scroll = True
         self.unknown_kind = None    # the game answers in a shape the reader does not know
 
@@ -92,6 +93,9 @@ class FakeGame:
                 return self._image(self.pages[self.page][i] if visible else "")
         if region == self.cal.card_icon_region(0) or region in [self.cal.card_icon_region(i) for i in range(3)]:
             return np.full((20, 20, 3), 90, dtype=np.uint8)
+        if region == self.cal.region("journal_ranking_list"):
+            # The same picture until a scroll moves the list, and none past its end.
+            return np.full((5, 5, 3), 30 * min(self.scrolls, self.list_end) % 256, dtype=np.uint8)
         return self._image(f"screen {self.page} {self.view}")
 
     def click(self, x, y, delay=0.0):
@@ -210,6 +214,24 @@ class MapperTest(unittest.TestCase):
         self.assertTrue(all("image" in e for e in entries))
         self.assertEqual([], mapper.conflicts(cards))
 
+    def test_pages_full_of_the_same_message_are_walked_by_the_page_number(self):
+        self.cal.calibration.set_region("journal_page_area", (480, 690), (520, 710))
+        same = ["Epic Fenrir squad attacked", "Epic Fenrir squad attacked"]
+        pages = [same, same, same, [title("Ragnarok tournament")]]
+        answers = {"Ragnarok tournament": ("cccccccc-0000-4000-8000-000000000001", (1026, 1))}
+        game = FakeGame(self.cal, pages, answers, self.collector)
+
+        cards = self.run_mapper(game)
+
+        self.assertEqual([("Ragnarok tournament", 4, mapper.STATUS_MAPPED)], [(c.name, c.page, c.status) for c in cards])
+
+    def test_without_the_page_number_the_same_titles_mean_the_last_page(self):
+        same = ["Epic Fenrir squad attacked"]
+        game = FakeGame(self.cal, [same, same, [title("Never reached")]], {}, self.collector)
+
+        self.assertEqual([], self.run_mapper(game))
+        self.assertEqual(1, game.page)
+
     def test_a_cached_ranking_is_reported_and_the_walk_goes_on(self):
         pages = [[title("Cached"), title("Fresh")]]
         answers = {"Fresh": ("bbbbbbbb-0000-4000-8000-000000000001", (1013, 4))}
@@ -263,12 +285,27 @@ class MapperTest(unittest.TestCase):
                         {"Cached": ("eeeeeeee-0000-4000-8000-000000000001", (1024, 1), [3001, 3002, 3003, 3004])},
                         self.collector)
         game.profiles_on_scroll = False
+        game.list_end = 0
 
         [card] = self.run_mapper(game)
 
         self.assertEqual(mapper.STATUS_MAPPED, card.status)
         self.assertEqual(2, card.unnamed)
         self.assertEqual(mapper.MapperOptions().names_stalls, game.scrolls)
+
+    def test_a_list_that_still_moves_is_scrolled_on_without_new_names(self):
+        self.cal.calibration.set_region("journal_ranking_list", (300, 200), (700, 600))
+        game = FakeGame(self.cal, [[title("Long walk")]],
+                        {"Long walk": ("eeeeeeee-0000-4000-8000-000000000002", (1024, 1), [3101, 3102, 3103, 3104])},
+                        self.collector)
+        game.profiles_on_scroll = False
+        game.list_end = 6
+
+        [card] = self.run_mapper(game)
+
+        self.assertEqual(2, card.unnamed)
+        self.assertEqual(6 + mapper.MapperOptions().names_stalls, game.scrolls,
+                         "scrolled to the end of the list, then the usual stalls")
 
     def test_an_answer_in_an_unknown_shape_says_so_instead_of_no_answer(self):
         game = FakeGame(self.cal, [[title("Trials of Olympus tournament"), title("Fresh")]], {

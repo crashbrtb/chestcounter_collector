@@ -19,7 +19,9 @@ Once a day
 A search costs a walk through the Journal, and the site only needs it after
 tournaments end, so the module runs once a day by default (see
 core/schedule.py): the first run of the day that completes the search is the
-day's search, and one that does not is tried again on the next run.
+day's search, and one that does not is tried again on the next run. The day is
+the game's, starting at `day_start` (14:00 by default), when the tournaments of
+the day before have ended.
 
 How far back
 ------------
@@ -66,6 +68,7 @@ class EventsModule(BaseModule):
                    "site. Each profile uses its own site address and API token (Accounts and profiles > "
                    "Modules); a profile without them is skipped.")
     default_schedule = SCHEDULE_DAILY
+    default_day_start = "14:00"   # the game's day turns in the afternoon, not at midnight
     steps = STEPS
     required_steps = REQUIRED_STEPS
     settings = (
