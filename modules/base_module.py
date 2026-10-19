@@ -52,6 +52,9 @@ class BaseModule(ABC):
     default_enabled: bool = True
     default_schedule: str = SCHEDULE_EVERY_RUN
     default_day_start: str = DEFAULT_DAY_START
+    # A run with this module due starts on a freshly launched browser
+    # (execution.fresh_browser_for_rankings), not on the one left open.
+    fresh_browser: bool = False
     settings: Sequence[Field] = ()
     profile_fields: Sequence[Field] = ()
     steps: Sequence[Step] = ()

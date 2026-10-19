@@ -236,6 +236,8 @@ class Module:
         self.screen_reads += 1
         self._crops = [None] * len(chests)
         self._minutes_left = [self.game.minutes_left] * len(chests)
+        if isinstance(self.game.reading, dict):      # gift id -> what its line shows
+            return [list(self.game.reading.get(gift.gift_id, [])) for gift in self.game.panel()[:len(chests)]]
         return [list(self.game.reading or []) for _ in chests]
 
     @staticmethod
@@ -335,6 +337,57 @@ class Collection(unittest.TestCase):
         self.assertEqual((0, 1), (collected, incomplete))
         self.assertEqual({}, repo.learned)
         self.assertEqual([{"name": "", "player": "AndraBianca", "source": "", "gift": 10}], repo.incomplete)
+
+    def test_a_reading_with_the_gifts_countdown_and_another_players_name_is_not_believed(self):
+        # 12/10/2026: a Level 35 crypt chest from one player, read off the
+        # Fenrir chest another player got six seconds earlier - same minutes left.
+        game = Game([row(10, PIPO, chest_type=5784)])
+        game.reading = ["Fenrir's Chest", "From: AndraBianca", "Source: Epic Fenrir squad"]
+        game.minutes_left = (SOON - int(time.time())) // 60
+        repo = Repo()
+
+        (collected, incomplete, _finished), _module = self.collect(game, repo)
+
+        self.assertEqual((0, 1), (collected, incomplete))
+        self.assertEqual({}, repo.learned)
+        self.assertEqual([{"name": "", "player": "Pipolebon", "source": "", "gift": 10}], repo.incomplete)
+
+    def test_a_type_read_on_a_single_gift_names_its_chest_but_is_not_learned(self):
+        game = Game([row(10, chest_type=9999)])
+        game.reading = ["Mimic Chest", "From: AndraBianca", "Source: Mimic Chest"]
+        game.minutes_left = (SOON - int(time.time())) // 60
+        repo = Repo()
+
+        (collected, incomplete, _finished), _module = self.collect(game, repo)
+
+        self.assertEqual((1, 0), (collected, incomplete))
+        self.assertEqual({}, repo.learned)
+        self.assertEqual([("Mimic Chest", "AndraBianca", "Mimic Chest")], [r[:3] for r in repo.rows.values()])
+
+    def test_a_type_its_gifts_disagree_on_is_not_learned(self):
+        game = Game([row(10, chest_type=9999), row(11, PIPO, chest_type=9999), row(12, chest_type=9999)])
+        game.reading = {10: ["Mimic Chest", "From: AndraBianca", "Source: Mimic Chest"],
+                        11: ["Fenrir's Chest", "From: Pipolebon", "Source: Epic Fenrir squad"],
+                        12: ["Mimic Chest", "From: AndraBianca", "Source: Mimic Chest"]}
+        game.minutes_left = (SOON - int(time.time())) // 60
+        repo = Repo()
+
+        (collected, incomplete, _finished), _module = self.collect(game, repo)
+
+        self.assertEqual((3, 0), (collected, incomplete))
+        self.assertEqual({}, repo.learned)
+        self.assertEqual(["Mimic Chest", "Fenrir's Chest", "Mimic Chest"], [r[0] for r in repo.rows.values()])
+
+    def test_a_player_the_site_does_not_know_does_not_count_towards_naming_a_type(self):
+        game = Game([row(10, 777, chest_type=9999), row(11, 778, chest_type=9999)])
+        game.reading = ["Mimic Chest", "From: Newcomer", "Source: Mimic Chest"]
+        game.minutes_left = (SOON - int(time.time())) // 60
+        repo = Repo()
+
+        (collected, _incomplete, _finished), _module = self.collect(game, repo)
+
+        self.assertEqual(2, collected)
+        self.assertEqual({}, repo.learned)
 
     def test_without_any_countdown_the_players_vouch_for_the_reading(self):
         # A chest area calibrated around the text alone: no countdown is ever read.

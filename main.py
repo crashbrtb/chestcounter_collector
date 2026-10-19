@@ -107,7 +107,7 @@ def main() -> int:
         return EXIT_OK
 
     from core.context import build_context
-    from core.runner import ModuleRunner, RunnerError
+    from core.runner import ModuleRunner, RunAlreadyActive, RunnerError
 
     context = build_context(config)
     runner = ModuleRunner(context)
@@ -134,6 +134,10 @@ def main() -> int:
     except Cancelled as exc:
         logger.warning(f"Execution cancelled ({exc}). Already collected chests remain saved.")
         return EXIT_CANCELLED
+    except RunAlreadyActive as exc:
+        # Not a failure: the run in progress does the work; the next scheduled one catches up.
+        logger.warning(str(exc))
+        return EXIT_OK
     except RunnerError as exc:
         logger.error(str(exc))
         return EXIT_MISCONFIGURED

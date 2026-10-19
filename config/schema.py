@@ -62,6 +62,10 @@ SECTIONS: List[Section] = [
             Field("restart_browser_on_failure", "bool", "Restart browser when an account fails", True,
                   "When no profile of an account can be collected (usually the game froze in Chrome "
                   "and needs F5), closes the browser, opens a fresh one and tries the account once more."),
+            Field("fresh_browser_for_rankings", "bool", "Restart browser before tournament rankings", True,
+                  "A run that collects tournament rankings starts by closing the browser and opening a "
+                  "fresh one, so the Journal is read on a freshly loaded game. Those runs happen only a "
+                  "few times a day; the chest-only runs keep reusing the open browser."),
             Field("log_level", "choice", "Log level", "INFO",
                   "DEBUG logs every OCR reading and every click.",
                   choices=("DEBUG", "INFO", "WARNING", "ERROR")),

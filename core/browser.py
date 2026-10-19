@@ -70,6 +70,21 @@ class BrowserError(RuntimeError):
     pass
 
 
+# Against Chrome throttling a window it considers covered or unseen. A
+# fullscreen window on top did not throttle it on the development machine. In
+# production, from 17/10/2026, with the collector reusing a Chrome it had not
+# opened, the Journal's "Show details" stopped being found (similarity stuck at
+# 0.46) on most runs and worked again on others with nothing in the collector
+# changed - throttling of an unwatched window is the suspect. start() restarts a
+# reused browser that lacks any of them, so that suspect is out either way.
+THROTTLING_FLAGS = (
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+    "--disable-background-timer-throttling",
+    "--disable-features=CalculateNativeWinOcclusion,Translate,TranslateUI",
+)
+
+
 class Browser:
     """A Chrome tab showing Total Battle, plus the input and capture it accepts."""
 
@@ -135,17 +150,7 @@ class Browser:
             "--no-default-browser-check",
             "--disable-session-crashed-bubble",
             "--disable-popup-blocking",
-
-            # Belt and braces against Chrome throttling a window it considers
-            # covered. Measured on this machine, captures stay fresh with a
-            # fullscreen always-on-top window over Chrome even WITHOUT these
-            # flags (same image difference, 0.05s latency), so they fix nothing
-            # that was observed - they only remove a variable that would be
-            # miserable to diagnose if it ever did bite.
-            "--disable-backgrounding-occluded-windows",
-            "--disable-renderer-backgrounding",
-            "--disable-background-timer-throttling",
-            "--disable-features=CalculateNativeWinOcclusion,Translate,TranslateUI",
+            *THROTTLING_FLAGS,
 
             # The translate bar is browser chrome, not page content: it never
             # reaches a screenshot nor intercepts a CDP click. It is disabled
@@ -181,6 +186,14 @@ class Browser:
         """
         if self.reuse_existing and self.is_cdp_ready():
             logger.info(f"Reusing the browser already listening on CDP port {self.port}.")
+            missing = self.missing_launch_flags()
+            if missing:
+                logger.warning(
+                    f"The browser on CDP port {self.port} was not opened by the collector and lacks "
+                    f"{', '.join(missing)}: with nobody looking at the screen, Chrome stops drawing the "
+                    "game and buttons are not found. Restarting it with the collector's flags."
+                )
+                return self.restart()
             try:
                 if self.connect() and self.is_responsive():
                     return True
@@ -193,6 +206,36 @@ class Browser:
         if not self.connect():
             raise BrowserError("Could not connect to the game tab via CDP.")
         return True
+
+    def missing_launch_flags(self) -> List[str]:
+        """
+        The THROTTLING_FLAGS the browser on our port was started without.
+
+        Empty when they are all there, and also when the command line cannot be
+        read (not Windows, no access): a browser is only restarted on evidence.
+        """
+        if os.name != "nt":
+            return []
+        port = f"--remote-debugging-port={self.port}"
+        script = (
+            "Get-CimInstance Win32_Process | "
+            f"Where-Object {{ $_.CommandLine -and $_.CommandLine.Contains('{port}') "
+            "-and -not $_.CommandLine.Contains('--type=') } | "
+            "Select-Object -First 1 -ExpandProperty CommandLine"
+        )
+        try:
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                capture_output=True, text=True, timeout=30,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception as exc:
+            logger.debug(f"Reading the browser's command line: {exc}")
+            return []
+        command_line = (result.stdout or "").strip()
+        if not command_line:
+            return []
+        return [flag for flag in THROTTLING_FLAGS if flag not in command_line]
 
     def is_responsive(self, timeout: float = 10.0) -> bool:
         """True when the game tab still runs JavaScript and still renders a frame."""

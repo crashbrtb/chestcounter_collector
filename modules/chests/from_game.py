@@ -49,6 +49,18 @@ countdown agrees with the gift's own expiry - or, where the capture holds no
 countdown at all, when every line of the batch names the player the game gave
 for it; otherwise the chest goes to the review queue with its picture and what
 the game did say about it.
+
+The countdown alone is not proof enough to name a type. Chests generated a few
+seconds apart show the same minutes, so a panel caught before it redrew passes
+it with the line of the chest before: that is how type 5784 - Chest of the
+Cursed, of a Level 35 epic Crypt - was named 'Fenrir's Chest' on 12/10/2026,
+read off another player's Fenrir chest generated six seconds earlier, and went
+on naming hundreds of crypt chests that way long after the event had ended. So
+a reading that names a player other than the gift's is not believed either, and
+a type is only written to `game_chest_types` - where it stays, since a type
+already named is never named again - once TYPE_CONFIRMATIONS gifts of it, their
+players checked, have been read the same way. Until then each gift of it is
+named from its own reading.
 """
 
 import time
@@ -82,6 +94,11 @@ SCREEN_SETTLE_WAIT = 1.0
 # same chest: the panel prints whole minutes and was read a moment before.
 COUNTDOWN_TOLERANCE = 120
 
+# How many gifts of a new chest type, each read with its player checked, have to
+# agree on its name before it is written to `game_chest_types`. See the module's
+# docstring: a type named wrong there stays wrong.
+TYPE_CONFIRMATIONS = 2
+
 
 class GameCollection:
     """One tab of gifts, collected from the game's list. See the module's docstring."""
@@ -100,6 +117,8 @@ class GameCollection:
         self.in_database: Dict[int, int] = {}       # gift id -> chests the database had when last asked
         self.written: Dict[int, List[int]] = {}     # gift id -> rows this run wrote for it
         self.filed: set = set()                     # gifts this run sent to the review queue
+        self.sightings: Dict[int, Dict[int, Tuple[str, str]]] = {}   # new type -> gift id -> (name, source) read
+        self.disputed: set = set()                  # new types whose gifts were read with different names
         self.collected = 0
         self.incomplete = 0
         self.clicked = 0
@@ -224,7 +243,9 @@ class GameCollection:
 
         A reading is kept only when its countdown is the gift's own - the proof
         that the line read is the chest it is taken for, and not the one that
-        was there a moment ago.
+        was there a moment ago - and when it does not name a player other than
+        the gift's. `verified` marks the readings whose player was checked, the
+        only ones that count towards naming a type.
         """
         module = self.module
         scale = float(module.config.section("ocr").get("capture_scale", 2.0))
@@ -246,14 +267,19 @@ class GameCollection:
             for gift, rows, crop, left in zip(head, batch, crops, minutes):
                 if readings.get(gift.gift_id, {}).get("chest"):
                     continue
-                reading = {"crop": crop, "chest": "", "player": "", "source": ""}
+                reading = {"crop": crop, "chest": "", "player": "", "source": "", "verified": False}
+                known = self.players.get(gift.player_id)
                 if left is None:
-                    fits = vouched and gift.player_id in self.players
+                    fits = vouched and bool(known)
                 else:
                     fits = abs(gift.expires_at - (read_at + left * 60)) <= COUNTDOWN_TOLERANCE
+                    # Chests generated seconds apart share the countdown: the
+                    # player is what tells this gift's line from its neighbour's.
+                    if fits and known and not self._same_player(rows, known):
+                        fits = False
                 if fits and len(rows) >= 3:
                     reading.update(chest=rows[0].strip(), player=parse_key_value_line(rows[1])[1],
-                                   source=parse_key_value_line(rows[2])[1])
+                                   source=parse_key_value_line(rows[2])[1], verified=bool(known))
                 elif self._needs_screen(gift):
                     unmatched.append((gift, rows, left))
                 readings[gift.gift_id] = reading
@@ -284,10 +310,15 @@ class GameCollection:
             known = self.players.get(gift.player_id)
             if not known:
                 continue
-            if parse_key_value_line(rows[1])[1].strip().casefold() != known.strip().casefold():
+            if not self._same_player(rows, known):
                 return False
             checked += 1
         return checked > 0
+
+    @staticmethod
+    def _same_player(rows: List[str], known: str) -> bool:
+        """Whether a line read off the panel names `known` as the chest's player."""
+        return len(rows) >= 2 and parse_key_value_line(rows[1])[1].strip().casefold() == known.strip().casefold()
 
     def _write(self, gift: Gift, reading: Optional[dict] = None) -> None:
         """Writes every chest of a gift, naming whatever the game sent only as a number."""
@@ -298,9 +329,8 @@ class GameCollection:
         name, source = self.types.get(gift.chest_type, ("", ""))
         if not name and reading.get("chest") and reading.get("source"):
             name, source = reading["chest"], reading["source"]
-            if self.repo.learn_chest_type(gift.chest_type, name, source):
-                logger.info(f"New chest type {gift.chest_type}: '{name}' ({source}), named from the screen.")
-            self.types[gift.chest_type] = (name, source)
+            if reading.get("verified"):
+                self._sighted(gift, name, source)
 
         player = self.players.get(gift.player_id, "")
         if not player and reading.get("player"):
@@ -340,6 +370,32 @@ class GameCollection:
             self.repo.insert_incomplete_chest(name, player, source, picture, gift.generated_at, game)
         self.filed.add(gift.gift_id)
         self.incomplete += missing
+
+    def _sighted(self, gift: Gift, name: str, source: str) -> None:
+        """
+        Counts a checked reading of a new type, and names the type once
+        TYPE_CONFIRMATIONS gifts of it agree. Gifts read differently leave it
+        unnamed for the rest of the run: one of the readings was some other
+        chest's, and nothing says which.
+        """
+        type_id = gift.chest_type
+        if type_id in self.disputed:
+            return
+        seen = self.sightings.setdefault(type_id, {})
+        seen[gift.gift_id] = (name, source)
+        names = set(seen.values())
+        if len(names) > 1:
+            self.disputed.add(type_id)
+            logger.warning(f"[{self.module.profile_label}] Chest type {type_id} was read as "
+                           + " and as ".join(f"'{n}' ({s})" for n, s in sorted(names))
+                           + " on different gifts; it is not named, and its chests are named from each reading.")
+            return
+        if len(seen) < TYPE_CONFIRMATIONS:
+            return
+        if self.repo.learn_chest_type(type_id, name, source):
+            logger.info(f"New chest type {type_id}: '{name}' ({source}), named from the screen "
+                        f"on {len(seen)} gifts: {sorted(seen)}.")
+        self.types[type_id] = (name, source)
 
     # ------------------------------------------------------------- settling
     def _settle(self) -> Optional[int]:

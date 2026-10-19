@@ -26,11 +26,12 @@ say) is left out of the run and reported, and the others go on without it.
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from config.settings import AccountConfig, ProfileConfig
+from config.settings import RUN_LOCK_PATH, AccountConfig, ProfileConfig
 from modules.base_module import BaseModule
 from modules.registry import MODULES, MODULES_BY_KEY, enabled_modules
 from utils.cancel import Cancelled, cancellation
 from utils.logger import logger, screenshot_dir
+from utils.run_lock import RunLock
 
 from .calibration import SHARED_REQUIRED_STEPS
 from .schedule import SCHEDULE_EVERY_RUN, ModuleSchedule
@@ -42,6 +43,10 @@ Plan = Dict[Tuple[str, str], List[BaseModule]]
 
 class RunnerError(RuntimeError):
     pass
+
+
+class RunAlreadyActive(RunnerError):
+    """Another run (the scheduler's or the interface's) is driving the browser right now."""
 
 
 def final_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -62,8 +67,9 @@ class ModuleRunner:
     """Drives a full run across every enabled account, profile and module."""
 
     def __init__(self, context, modules: Optional[Sequence[BaseModule]] = None,
-                 schedule: Optional[ModuleSchedule] = None):
+                 schedule: Optional[ModuleSchedule] = None, lock_path: str = RUN_LOCK_PATH):
         self.ctx = context
+        self.lock = RunLock(lock_path)
         self.execution = context.config.section("execution")
         self.timing = context.config.section("timing")
         self.modules: List[BaseModule] = (list(modules) if modules is not None
@@ -236,7 +242,24 @@ class ModuleRunner:
 
         `only_modules` restricts the run to those module keys; `force` ignores
         the schedule, so a once-a-day module runs again.
+
+        Only one run at a time drives the browser (utils/run_lock.py): a run
+        that finds another one going raises RunAlreadyActive before touching
+        anything.
         """
+        if not self.lock.acquire():
+            holder = self.lock.holder()
+            raise RunAlreadyActive(
+                "Another run is already in progress" + (f" (process {holder})" if holder else "")
+                + "; this one was not started, so the two do not fight over the browser."
+            )
+        try:
+            return self._locked_run(only_account, only_profile, only_modules, force)
+        finally:
+            self.lock.release()
+
+    def _locked_run(self, only_account: Optional[str], only_profile: Optional[str],
+                    only_modules: Optional[Sequence[str]], force: bool) -> Dict[str, Any]:
         started = datetime.now()
         self.results = []
         modules = self._selected_modules(only_modules)
@@ -307,6 +330,7 @@ class ModuleRunner:
             return self._summary(started)
 
         self.ctx.start_browser()
+        self._fresh_browser_if_wanted(plan)
 
         busy = [account for account in accounts
                 if any((account.name, profile.name) in plan for profile in account.active_profiles)]
@@ -318,6 +342,31 @@ class ModuleRunner:
             self._run_account_with_restart(account, only_profile, plan)
 
         return self._summary(started)
+
+    def _fresh_browser_if_wanted(self, plan: Plan):
+        """
+        Restarts the browser when a module that asks for a fresh one is due.
+
+        Only the modules in the plan count: a chest-only run keeps the browser
+        it found. A restart that fails is logged and the run goes on with the
+        browser it has, as it would have without this.
+        """
+        if not self.execution.get("fresh_browser_for_rankings", True):
+            return
+        wanting = []
+        for tasks in plan.values():
+            for module in tasks:
+                if module.fresh_browser and module.title not in wanting:
+                    wanting.append(module.title)
+        if not wanting:
+            return
+        logger.info(f"{', '.join(wanting)} due on this run: restarting the browser to start on a fresh game.")
+        try:
+            self.ctx.browser.restart()
+            self.ctx.sync_viewport()
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Could not restart the browser ({exc}); going on with the one already open.")
+            self.ctx.start_browser()
 
     def _run_account_with_restart(self, account: AccountConfig, only_profile: Optional[str], plan: Plan):
         """

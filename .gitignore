@@ -12,6 +12,9 @@ config/calib_refs/
 config/module_state.json
 config/module_data/
 
+# Held by the run in progress, so two runs never drive the browser at once
+config/run.lock
+
 # Execution logs and environment
 execution_logs/
 venv/

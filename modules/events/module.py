@@ -69,6 +69,9 @@ class EventsModule(BaseModule):
                    "Modules); a profile without them is skipped.")
     default_schedule = SCHEDULE_DAILY
     default_day_start = "14:00"   # the game's day turns in the afternoon, not at midnight
+    # The Journal walk is long and runs a few times a day; on a Chrome left open
+    # for hours "Show details" stopped being found (17-19/10/2026).
+    fresh_browser = True
     steps = STEPS
     required_steps = REQUIRED_STEPS
     settings = (

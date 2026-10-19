@@ -24,8 +24,10 @@ their methods are used, so the whole walk can be run against a simulated game
 from __future__ import annotations
 
 import base64
+import os
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Callable, Dict, List, Optional, Set, Tuple
 
 import numpy as np
@@ -37,6 +39,7 @@ except ImportError:  # pragma: no cover
 
 from core.vision import changed_fraction
 from utils.cancel import cancellation
+from utils.logger import screenshot_dir
 
 from . import journal
 from .layout import JournalLayout
@@ -155,6 +158,7 @@ class JournalMapper:
         self._ages_read = 0
         # Whether the last turn of page was confirmed by the page number on screen.
         self._page_number_moved = False
+        self._diagnostic_saved = False
 
     # --------------------------------------------------------------- control
     def _log(self, text: str) -> None:
@@ -381,9 +385,29 @@ class JournalMapper:
                 return
             x, y = center
             if self.vision is not None:
-                self._log(f"  Show details button not recognised (similarity {self.vision.last_score:.2f}); "
-                          "pressing the calibrated position.")
+                self._log(f"  Show details button not recognised (similarity {self.vision.last_score:.2f}"
+                          f"{self._page_state()}); pressing the calibrated position.")
+                self._save_diagnostic("show_details_not_found")
         self.browser.click(x, y)
+
+    def _page_state(self) -> str:
+        """Whether Chrome thinks the page is seen: an unseen one may stop drawing the game."""
+        evaluate = getattr(self.browser, "evaluate", None)
+        state = evaluate("document.visibilityState + ', focus ' + document.hasFocus()") if evaluate else None
+        return f", page {state}" if state else ""
+
+    def _save_diagnostic(self, label: str) -> None:
+        """
+        The screen as it is now, once per run: the failure screenshot the runner
+        takes comes after the Journal has been closed and shows only the city.
+        """
+        save = getattr(self.browser, "save_screenshot", None)
+        if self._diagnostic_saved or save is None:
+            return
+        self._diagnostic_saved = True
+        path = os.path.join(screenshot_dir(), f"{datetime.now():%Y%m%d_%H%M%S}_events_{label}.png")
+        if save(path):
+            self._log(f"  Screen saved to {path}")
 
     def _wait_for_answer(self, before: Dict[str, float], before_unknown: Set[str]) -> Tuple[Optional[str], Optional[str]]:
         """(result uid, None) when the ranking arrived, (None, "kind · sample") when the answer was not one."""

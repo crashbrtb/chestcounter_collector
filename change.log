@@ -1,3 +1,23 @@
+Next  - One run at a time, and a reused Chrome is checked for the flags that keep it drawing.
+  - On 19/10 the scheduled run started at 18:51 while a module run from the interface was still in the
+    Journal. Both drove the same Chrome, the newcomer reset the game under the other, and every profile
+    failed after that. A run now holds config/run.lock (an OS lock, dropped when the process ends,
+    however it ends); one that finds it held logs a warning and does not start (exit code 0)
+    (utils/run_lock.py, core/runner.py, main.py).
+  - From 17/10 the Journal's "Show details" was almost never found (similarity stuck at 0.46): the
+    ranking did not arrive, closing the card closed the whole Journal and the profile failed. It worked
+    again on other runs with nothing in the collector changed. The suspect is Chrome throttling an
+    unseen window: the collector had been reusing a Chrome it had not opened, so the anti-throttling
+    flags were never checked. A reused Chrome whose command line lacks any of them is now restarted with
+    them (core/browser.py).
+  - When "Show details" is not recognised, the log says whether Chrome thinks the page is visible and
+    focused, and the screen is saved once per run as <time>_events_show_details_not_found.png. The
+    failure screenshot came after the Journal was closed and showed only the city (modules/events/mapper.py).
+  - A run with the tournament rankings due starts by closing the browser and opening a fresh one, so the
+    Journal is read on a freshly loaded game rather than on a Chrome left open for hours. Those runs
+    happen a few times a day; chest-only runs keep reusing the open browser. New setting in Execution:
+    'Restart browser before tournament rankings' (on by default) (core/runner.py, modules/base_module.py).
+
 Next  - A run starts with the profile the game opened on.
   - The game always comes up on the profile used last. The run followed the configured order all the
     same: opened on the second profile, it switched to the first and later back to the second - two

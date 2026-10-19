@@ -8,12 +8,13 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.settings import AccountConfig, ProfileConfig  # noqa: E402
-from core.runner import ModuleRunner, RunnerError  # noqa: E402
+from core.runner import ModuleRunner, RunAlreadyActive, RunnerError  # noqa: E402
 from core.schedule import SCHEDULE_DAILY  # noqa: E402
 from fakes import Clock, FakeContext, make_calibration, make_config, make_schedule  # noqa: E402
 from modules.base_module import BaseModule  # noqa: E402
 from modules.chests import ChestCollector  # noqa: E402
 from modules.events import EventsModule  # noqa: E402
+from utils.run_lock import RunLock  # noqa: E402
 
 
 class Scripted(BaseModule):
@@ -50,6 +51,7 @@ class Chests(Scripted):
 class Events(Scripted):
     key, title = "events", "Tournament rankings"
     required_steps = EventsModule.required_steps
+    fresh_browser = EventsModule.fresh_browser
     configured_for = classmethod(lambda cls, profile: EventsModule.configured_for(profile))
 
 
@@ -67,12 +69,60 @@ class RunnerTest(unittest.TestCase):
     def runner(self, complete=True):
         self.ctx = FakeContext(self.config, make_calibration(self.tmp.name, self.config, complete))
         self.chests, self.events = Chests(self.ctx, self.log), Events(self.ctx, self.log)
-        return ModuleRunner(self.ctx, [self.chests, self.events], make_schedule(self.tmp.name, self.clock))
+        return ModuleRunner(self.ctx, [self.chests, self.events], make_schedule(self.tmp.name, self.clock),
+                            lock_path=self.lock_path)
+
+    @property
+    def lock_path(self):
+        return os.path.join(self.tmp.name, "run.lock")
 
     def run_again(self, **kwargs):
         """A later start of the application: new process, same files."""
         self.log.clear()
         return self.runner().run(**kwargs)
+
+    # -------------------------------------------------------- one at a time
+    def test_a_run_does_not_start_while_another_holds_the_lock(self):
+        other = RunLock(self.lock_path)
+        self.assertTrue(other.acquire())
+        try:
+            with self.assertRaises(RunAlreadyActive):
+                self.runner().run()
+            self.assertEqual([], self.log)
+            self.assertEqual([], self.ctx.profiles.switched)
+        finally:
+            other.release()
+
+        self.runner().run()
+        self.assertIn(("chests", "Alpha"), self.log)
+
+    # ------------------------------------------------------- fresh browser
+    def test_a_run_with_tournament_rankings_due_starts_on_a_fresh_browser(self):
+        runner = self.runner()
+        runner.run()
+        self.assertEqual(1, self.ctx.browser.restarts)
+
+    def test_a_chest_only_run_keeps_the_open_browser(self):
+        runner = self.runner()
+        runner.run(only_modules=["chests"])
+        self.assertEqual(0, self.ctx.browser.restarts)
+
+    def test_the_fresh_browser_can_be_turned_off(self):
+        self.config.set("execution", "fresh_browser_for_rankings", False)
+        runner = self.runner()
+        runner.run()
+        self.assertEqual(0, self.ctx.browser.restarts)
+        self.assertIn(("events", "Alpha"), self.log)
+
+    def test_the_lock_is_released_when_the_run_fails(self):
+        runner = self.runner()
+        runner._locked_run = lambda *args: (_ for _ in ()).throw(RuntimeError("boom"))
+        with self.assertRaises(RuntimeError):
+            runner.run()
+
+        other = RunLock(self.lock_path)
+        self.assertTrue(other.acquire())
+        other.release()
 
     # ------------------------------------------------------------- the order
     def test_each_profile_gets_the_modules_set_up_for_it_chests_first(self):
@@ -193,7 +243,8 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual([], self.log)
         self.assertEqual({("chests", "Alpha"), ("events", "Alpha"), ("chests", "Beta")},
                          {(f["module"], f["profile"]) for f in summary["failures"]})
-        self.assertEqual(1, self.ctx.browser.restarts, "nothing done on the account: one fresh browser, one retry")
+        # One because the tournament rankings are due, one because nothing was done on the account.
+        self.assertEqual(2, self.ctx.browser.restarts, "a fresh browser to start, then one for the retry")
 
     def test_a_module_whose_screens_were_never_calibrated_is_left_out_and_the_rest_runs(self):
         summary = self.runner(complete=False).run()

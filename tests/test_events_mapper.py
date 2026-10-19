@@ -242,6 +242,30 @@ class MapperTest(unittest.TestCase):
         self.assertEqual([mapper.STATUS_NO_ANSWER, mapper.STATUS_MAPPED], [c.status for c in cards])
         self.assertEqual(["Fresh"], [e["name"] for e in mapper.catalogue_entries(cards)])
 
+    def test_a_button_not_recognised_leaves_one_picture_of_the_screen_and_the_page_state(self):
+        class NoMatch:
+            last_score = 0.46
+
+            def find(self, *args, **kwargs):
+                return None
+
+        pages = [[title("First"), title("Second")]]
+        answers = {"First": ("cccccccc-0000-4000-8000-000000000001", (1033, 1)),
+                   "Second": ("cccccccc-0000-4000-8000-000000000002", (1033, 1))}
+        game = FakeGame(self.cal, pages, answers, self.collector)
+        game.saved = []
+        game.save_screenshot = lambda path: game.saved.append(path) or True
+        game.evaluate = lambda expression: "hidden, focus false"
+        log = []
+
+        cards = self.run_mapper(game, vision=NoMatch(), on_log=log.append)
+
+        # The calibrated position is still pressed, so the rankings still arrive.
+        self.assertEqual([mapper.STATUS_MAPPED] * 2, [c.status for c in cards])
+        self.assertEqual(1, len(game.saved))
+        self.assertTrue(game.saved[0].endswith("_events_show_details_not_found.png"))
+        self.assertTrue(any("similarity 0.46, page hidden, focus false" in line for line in log))
+
     def test_the_ranking_is_scrolled_until_every_player_has_a_name(self):
         self.cal.calibration.set_region("journal_ranking_list", (300, 200), (700, 600))
         uid = "dddddddd-0000-4000-8000-000000000001"

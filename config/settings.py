@@ -39,6 +39,8 @@ CALIBRATION_REFS_DIR = os.path.join(CONFIG_DIR, "calib_refs")
 MODULE_STATE_PATH = os.path.join(CONFIG_DIR, "module_state.json")
 # What a module keeps between runs, one folder per module.
 MODULE_DATA_DIR = os.path.join(CONFIG_DIR, "module_data")
+# Held by the run in progress (utils/run_lock.py).
+RUN_LOCK_PATH = os.path.join(CONFIG_DIR, "run.lock")
 LEGACY_CONFIG_PATH = os.path.join(BASE_DIR, "position.cfg")
 
 
