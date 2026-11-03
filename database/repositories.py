@@ -22,6 +22,16 @@ class ChestRepository:
         #: id of the row the last insert_chest wrote
         self.last_id: Optional[int] = None
 
+    def keep_alive(self) -> None:
+        """
+        Opens the connection again if the server closed it while the collector was
+        elsewhere. A picture of the gifts panel keeps the database idle for half a
+        minute, and some servers drop a connection idle for less (on 03/11/2026 one
+        dropped every connection after each picture). Every write here is committed
+        as it is made, so nothing is lost with the old connection.
+        """
+        self.connection.ping(reconnect=True, attempts=3, delay=2)
+
     def get_player_name_mapping(self, ocr_player_name: str) -> str:
         """
         Checks if a player name is mapped to a canonical player name.

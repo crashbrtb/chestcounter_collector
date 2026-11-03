@@ -155,7 +155,11 @@ class Repo:
         self.existing = dict(existing or {})
         self.last_id = None
         self.refuse = False
+        self.connected = True     # False: the server closed the connection
         self._next = 100
+
+    def keep_alive(self):
+        self.connected = True
 
     def chest_types(self):
         return dict(self.types)
@@ -164,7 +168,9 @@ class Repo:
         return dict(self.players)
 
     def chests_of_gifts(self, first, last):
-        counts = {g: n for g, n in self.existing.items() if first <= g <= last}
+        if not self.connected:
+            raise RuntimeError("MySQL Connection not available.")
+        counts ={g: n for g, n in self.existing.items() if first <= g <= last}
         for _name, _player, _source, _when, gift_id in self.rows.values():
             if first <= gift_id <= last:
                 counts[gift_id] = counts.get(gift_id, 0) + 1
@@ -360,6 +366,19 @@ class Collection(unittest.TestCase):
         with mock.patch.object(from_game, "MAX_PASSES", 1):
             self.assertEqual((1, 1, True), self.collect(game, repo))
 
+        self.assertEqual([10, 11], game.opened)
+        self.assertEqual([(11, b"png")], [(e["gift"], e["picture"]) for e in repo.incomplete])
+
+    def test_a_connection_the_server_dropped_during_a_picture_is_opened_again(self):
+        game = Game([row(10), row(11, chest_type=9999)])
+        repo = Repo()
+
+        def picture_while_the_server_drops_the_connection(_position):
+            repo.connected = False
+            return b"png"
+        game.camera = picture_while_the_server_drops_the_connection
+
+        self.assertEqual((1, 1, True), self.collect(game, repo))
         self.assertEqual([10, 11], game.opened)
         self.assertEqual([(11, b"png")], [(e["gift"], e["picture"]) for e in repo.incomplete])
 
