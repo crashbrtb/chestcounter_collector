@@ -6,17 +6,17 @@ reaches for a global and the GUI can build the very same context to run a test
 collection without duplicating the wiring.
 """
 
-from dataclasses import dataclass
-from typing import Optional
+import os
+from dataclasses import dataclass, field
+from typing import Dict, Optional
 
-from config.settings import ConfigManager
+from config.settings import AccountConfig, ConfigManager, same_folder
 from modules.registry import calibration_scope, step_groups
 from utils.logger import logger
 
 from .browser import Browser
 from .calibration import Calibration
 from .game_state import GameState
-from .ocr import OCREngine
 from .session import LoginManager, ProfileSwitcher
 from .vision import Vision
 
@@ -26,11 +26,23 @@ class RunContext:
     config: ConfigManager
     calibration: Calibration
     browser: Browser
-    ocr: OCREngine
     vision: Vision
     game_state: GameState
     login: LoginManager
     profiles: ProfileSwitcher
+    # The other accounts' windows, each with services of its own.
+    windows: Dict[str, "RunContext"] = field(default_factory=dict)
+
+    def for_account(self, account: AccountConfig) -> "RunContext":
+        """The services working on this account's window. Asked from one thread: the runner's."""
+        if self.browser.port == account.cdp_port and same_folder(self.browser.user_data_dir,
+                                                                 self.config.chrome_folder_for(account)):
+            return self
+        if account.name not in self.windows:
+            # A calibration of its own: each window tells it the size of its page.
+            calibration = Calibration(self.calibration.groups, self.calibration.path, self.calibration.refs_dir)
+            self.windows[account.name] = build_context(self.config, calibration, account)
+        return self.windows[account.name]
 
     def start_browser(self):
         """
@@ -80,6 +92,8 @@ class RunContext:
         )
 
     def close(self):
+        for window in self.windows.values():
+            window.close()
         if self.config.get("execution", "close_browser_on_finish", True):
             self.browser.close()
         else:
@@ -87,13 +101,26 @@ class RunContext:
             self.browser.disconnect()
 
 
-def build_context(config: Optional[ConfigManager] = None, calibration: Optional[Calibration] = None) -> RunContext:
+def browser_for(config: ConfigManager, account: AccountConfig) -> Browser:
+    """The Chrome window of an account: its port, its folder."""
+    return Browser(dict(config.section("browser"), cdp_port=account.cdp_port), config.chrome_folder_for(account))
+
+
+def build_context(config: Optional[ConfigManager] = None, calibration: Optional[Calibration] = None,
+                  account: Optional[AccountConfig] = None) -> RunContext:
+    """The services of one window: the account's, or the first account's for the wizard and the checks."""
     config = config or ConfigManager()
+    config.pin_windows()
     calibration = calibration or Calibration(step_groups())
     calibration.required = calibration_scope(config)
 
-    browser = Browser(config.section("browser"), config.user_data_dir())
-    ocr = OCREngine(browser, config.section("ocr"))
+    if account is None:
+        account = next(iter(config.enabled_accounts() or config.accounts), None)
+    if account is None:
+        browser = Browser(dict(config.section("browser"), cdp_port=config.get("browser", "first_cdp_port")),
+                          os.path.join(config.profiles_dir(), "default"))
+    else:
+        browser = browser_for(config, account)
     vision = Vision(browser, config.section("vision"))
     timing = config.section("timing")
     game_state = GameState(browser, vision, calibration, timing)
@@ -102,9 +129,8 @@ def build_context(config: Optional[ConfigManager] = None, calibration: Optional[
         config=config,
         calibration=calibration,
         browser=browser,
-        ocr=ocr,
         vision=vision,
         game_state=game_state,
         login=LoginManager(browser, config.section("login")),
-        profiles=ProfileSwitcher(browser, ocr, vision, calibration, game_state, timing),
+        profiles=ProfileSwitcher(browser),
     )

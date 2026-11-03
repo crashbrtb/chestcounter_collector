@@ -1,18 +1,13 @@
-"""Reads the clan's gifts out of the game's traffic.
+"""What the game says about the clan's gifts.
 
-What the game sends (confirmed on a real recording, 11/10/2026, 859 chests):
+What it sends (confirmed on real recordings, 11/10/2026 and 01/11/2026):
 
-- The list (HTTP, route 15000), when the clan window is opened. The clan record
-  is `[[clan_id], [tag, name, ...], [members], ..., gifts at [13], ...]` and each
-  gift `[gift_id, [player_id], chest_type, expires_at, quantity, 1]`. The game
-  asks for the same record again every few seconds while the window is open, and
-  those answers come with the members and the gifts empty: only one that has
-  members counts, and such a one with no gifts says there are none.
-- A gift generated while the game is open (any HTTP answer): an event on the
-  tail of whatever is sent next, `[session, seq, time, 300020]` followed by
-  `[[gift row]]`.
-- Opening a chest (HTTP, route 15013): one answer per chest opened, carrying what
-  was inside it. It does not say which gift it was.
+- The list (route 15000). The clan record is
+  `[[clan_id], [tag, name, ...], [members], ..., gifts at [13], ...]` and each
+  gift `[gift_id, [player_id], chest_type, expires_at, quantity, 1]`. Only a
+  record that has members counts, and such a one with no gifts says there are none.
+- Opening a gift (route 15013): the answer carries what was inside it, added up,
+  and does not say which gift it was.
 
 A gift is one kill, one crypt, one purchase; `quantity` is how many chests it
 put in the panel - an epic monster drops several at once - and the panel lists
@@ -26,28 +21,22 @@ The game sends neither the chest's name nor the player's: the type is a number
 (`game_chest_types` in the database names it) and so is the player
 (`members.game_player_id`).
 
-Nothing here knows about the network or the window, so it can be tested with
-hand-built packets and fed from a live capture or a saved recording alike.
+Nothing here knows about the network, so it can be tested with hand-built packets.
 """
 from __future__ import annotations
 
-import base64
-import threading
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Dict, List, Optional
-
-from ..events import tbcodec
+from typing import Any, List, Optional
 
 CLAN_ROUTE = 15000
 OPEN_ROUTE = 15013
-GIFT_EVENT = 300020
 GIFTS_FIELD = 13
 GIFT_LIFETIME_SECONDS = 20 * 60 * 60
 
 # The row's last field. Every gift seen so far has 1 there; one that has
-# something else is of a kind nobody has looked at yet (the Triumphal Gifts tab
-# was empty on the recordings) and is left to the reading of the screen.
+# something else is of a kind nobody has looked at yet, and is left in the game
+# (the Triumphal Gifts tab was empty on every recording).
 PLAIN_GIFT = 1
 
 
@@ -117,82 +106,3 @@ def _clan_gifts(objects: Any) -> Optional[List[Gift]]:
             return gifts
         stack.extend((child, level + 1) for child in node)
     return None
-
-
-def _event_gifts(tail: bytes) -> List[Gift]:
-    gifts: List[Gift] = []
-    for event in tbcodec.tail_events(tail):
-        header = event[0]
-        if not (isinstance(header, list) and len(header) == 4 and header[3] == GIFT_EVENT):
-            continue
-        for payload in event[1:]:
-            for row in payload if isinstance(payload, list) else []:
-                gift = parse_gift_row(row)
-                if gift is not None:
-                    gifts.append(gift)
-    return gifts
-
-
-class GiftFeed:
-    """
-    What the traffic says about the gifts: which are waiting, and how many chests were opened.
-
-    `lists` counts the lists received, so whoever opened the clan window can wait
-    for the one that answers it. A list replaces everything known before it and
-    sets `opened` back to zero: from then on the gifts are that list plus the
-    ones announced after it, and `opened` the chests opened since.
-    """
-
-    def __init__(self) -> None:
-        self.lock = threading.Lock()
-        self.gifts: Dict[int, Gift] = {}
-        self.lists = 0
-        self.opened = 0
-
-    # ----------------------------------------------------------------- input
-    def feed_record(self, record: dict) -> bool:
-        """Take one record from traffic.TrafficListener. True when something was learned."""
-        if record.get("kind") != "RESP":
-            return False
-        try:
-            data = tbcodec._decompress(base64.b64decode(record.get("b64", "")))
-            frames = list(tbcodec.iter_frames(data))
-        except Exception:
-            return False
-        return self.feed_frames(frames)
-
-    def feed_frames(self, frames) -> bool:
-        learned = False
-        with self.lock:
-            for frame in frames:
-                if frame.route == CLAN_ROUTE:
-                    gifts = _clan_gifts(frame.objects)
-                    if gifts is not None:
-                        self.gifts = {gift.gift_id: gift for gift in gifts}
-                        self.lists += 1
-                        self.opened = 0
-                        learned = True
-                elif frame.route == OPEN_ROUTE and not frame.error:
-                    self.opened += 1
-                    learned = True
-                # After the list of the same answer, so a gift announced with it is kept.
-                for gift in _event_gifts(frame.tail) if frame.tail else []:
-                    if gift.gift_id not in self.gifts:
-                        self.gifts[gift.gift_id] = gift
-                        learned = True
-        return learned
-
-    # ---------------------------------------------------------------- output
-    def snapshot(self) -> List[Gift]:
-        """Every gift known since the last list, oldest first - the order of the panel."""
-        with self.lock:
-            return sorted(self.gifts.values(), key=lambda gift: gift.gift_id)
-
-    def state(self) -> tuple:
-        with self.lock:
-            return self.lists, self.opened
-
-
-def chests_of(gifts: List[Gift]) -> List[Gift]:
-    """One entry per chest, in the order of the panel: a gift of three chests is three lines."""
-    return [gift for gift in gifts for _ in range(gift.quantity)]

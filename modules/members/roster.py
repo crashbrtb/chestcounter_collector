@@ -1,14 +1,15 @@
-"""Reads the clan's members out of the game's traffic.
+"""Reads the clan's members out of the game's answers.
 
-What the game sends (confirmed on a real recording, 11/10/2026):
+What the game sends (confirmed on a real recording, 11/10/2026, and asked for
+directly on 01/11/2026):
 
-- The clan (HTTP, route 15000), when the clan window is opened:
+- The clan (HTTP, route 15000), when the clan window is opened or asked with record 58:
   `[[clan_id], [tag, name, ...], [[[player_id], rank, timestamp], ...], ...]`.
   The third item is the membership: one row per member, with the rank as a
-  number (1 Leader, 2 Superior, 3 Officer, 4 Veteran, 5 Soldier). The game asks
-  for the same record again every few seconds while the window is open, and
-  those answers come with the membership empty: only one that has rows counts.
-- The members' profiles (HTTP, route 402), when the Members menu is clicked:
+  number (1 Leader, 2 Superior, 3 Officer, 4 Veteran, 5 Soldier). Asked with
+  record 8, as the game repeats while the window is open, the membership comes
+  empty: only one that has rows counts.
+- The members' profiles (HTTP, route 402):
   rows `[[player_id], account, name, country, ..., level at [7], ..., power at [10],
   [clan_id] at [11], ..., clan tag at [13], ..., [kingdom, x, y] at [15], ...]`.
   The whole clan came in one answer on the recording (95 members), before the
@@ -32,6 +33,12 @@ from ..events import tbcodec
 
 CLAN_ROUTE = 15000
 PROFILES_ROUTE = 402
+# What of the clan record is asked for. 58 is what the game asks when the clan
+# window opens, and brings the gifts and the membership; 8, which it repeats
+# afterwards, does not.
+CLAN_RECORD_WHOLE = 58
+# As many as the game itself asks for at a time.
+PROFILES_PER_REQUEST = 100
 RANKS = {1: "Leader", 2: "Superior", 3: "Officer", 4: "Veteran", 5: "Soldier"}
 
 

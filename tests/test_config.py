@@ -26,7 +26,7 @@ class ConfigTest(unittest.TestCase):
 
     def test_every_module_has_its_switch_and_schedule_with_defaults(self):
         config = ConfigManager(self.path)
-        self.assertEqual({"chests", "members", "events"}, set(config.data["modules"]))
+        self.assertEqual({"shield", "chests", "members", "events"}, set(config.data["modules"]))
         self.assertTrue(config.module("chests")["enabled"])
         self.assertEqual(SCHEDULE_EVERY_RUN, config.module("chests")["schedule"])
         self.assertEqual(SCHEDULE_DAILY, config.module("events")["schedule"])
@@ -38,21 +38,21 @@ class ConfigTest(unittest.TestCase):
         config = ConfigManager(self.path)
         config.set("modules.events", "enabled", "false")
         config.set("modules.events", "schedule", "whenever")       # not a choice: back to the default
-        config.set("modules.events", "reload_wait", 5)             # below the minimum
+        config.set("modules.events", "days_back", 0)               # below the minimum
         config.set("modules.chests", "schedule", SCHEDULE_DAILY)
         config.save()
 
         again = ConfigManager(self.path)
         self.assertFalse(again.module("events")["enabled"])
         self.assertEqual(SCHEDULE_DAILY, again.module("events")["schedule"])
-        self.assertEqual(10.0, again.module("events")["reload_wait"])
+        self.assertEqual(1, again.module("events")["days_back"])
         self.assertEqual(SCHEDULE_DAILY, again.get("modules.chests", "schedule"))
         self.assertEqual("bool", field_for("modules.events", "enabled").type)
 
     def test_a_file_from_before_the_modules_loads_and_keeps_its_values(self):
         old = {
             "execution": {"module": "chests", "retries_per_profile": 4},
-            "browser": {"cdp_port": 9333},
+            "browser": {"first_cdp_port": 9333, "cdp_port": 9222},
             "accounts": [{"name": "Main", "login": "a", "password": "b", "enabled": True, "browser_profile": "",
                           "profiles": [{"name": "Alpha", "enabled": True,
                                         "database": {"host": "h", "port": 3306, "user": "u",
@@ -63,7 +63,8 @@ class ConfigTest(unittest.TestCase):
 
         config = ConfigManager(self.path)
         self.assertEqual(4, config.get("execution", "retries_per_profile"))
-        self.assertEqual(9333, config.get("browser", "cdp_port"))
+        self.assertEqual(9333, config.get("browser", "first_cdp_port"))
+        self.assertNotIn("cdp_port", config.section("browser"))
         self.assertNotIn("module", config.section("execution"))
         self.assertTrue(config.module("chests")["enabled"])
         [account] = config.accounts
@@ -94,14 +95,12 @@ class ConfigTest(unittest.TestCase):
 class CalibrationGroupsTest(unittest.TestCase):
     def test_shared_steps_come_first_and_each_module_brings_its_own(self):
         groups = step_groups()
-        self.assertEqual(["shared", "chests", "members", "events"], [g.key for g in groups])
+        self.assertEqual(["shared", "chests", "events"], [g.key for g in groups])
         names = [step.name for group in groups for step in group.steps]
         self.assertEqual(len(names), len(set(names)), "a step is calibrated once")
-        self.assertIn("profile_menu_button", [s.name for s in groups[0].steps])
+        self.assertIn("store_marker", [s.name for s in groups[0].steps])
         self.assertIn("open_button", [s.name for s in groups[1].steps])
-        # The clan button is also the members module's, and stays with the chests.
-        self.assertEqual(["clan_members_button", "clan_members_list"], [s.name for s in groups[2].steps])
-        self.assertIn("journal_show_details", [s.name for s in groups[3].steps])
+        self.assertIn("journal_next_page", [s.name for s in groups[2].steps])
 
     def test_a_step_two_modules_declare_is_calibrated_once(self):
         first = StepGroup("a", "A", [Step("clan_button", "click", "Clan", "")])

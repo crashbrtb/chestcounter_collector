@@ -28,6 +28,7 @@ switcher too), and threading one more argument through every constructor each
 time was how the old signatures drifted apart.
 """
 
+import copy
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
@@ -62,14 +63,18 @@ class BaseModule(ABC):
         self.ctx = context
         self.options: Dict[str, Any] = context.config.module(self.key)
 
+    def on_window(self, context) -> "BaseModule":
+        """This module working on another account's window."""
+        if context is self.ctx:
+            return self
+        twin = copy.copy(self)
+        twin.ctx = context
+        return twin
+
     # Convenience shortcuts - modules read these constantly.
     @property
     def browser(self):
         return self.ctx.browser
-
-    @property
-    def ocr(self):
-        return self.ctx.ocr
 
     @property
     def vision(self):

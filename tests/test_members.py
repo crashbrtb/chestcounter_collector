@@ -5,32 +5,28 @@ import json
 import os
 import sys
 import tempfile
-import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
-
-import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.settings import AccountConfig, ProfileConfig  # noqa: E402
 from core.calibration import Calibration  # noqa: E402
 from core.runner import ModuleRunner  # noqa: E402
-from fakes import SITE_A, Clock, FakeBrowser, FakeContext, database, make_config, make_schedule  # noqa: E402
+from fakes import SITE_A, Clock, FakeContext, database, make_config, make_schedule  # noqa: E402
+from modules.chests import game_link  # noqa: E402
 from modules.events import tbcodec  # noqa: E402
 from modules.events.api import ApiError  # noqa: E402
+from modules.events.traffic import GameLinkError  # noqa: E402
 from modules.members import MembersModule  # noqa: E402
 from modules.members import module as members_module  # noqa: E402
 from modules.members.roster import (CLAN_ROUTE, PROFILES_ROUTE, RosterCollector, parse_clan_record,  # noqa: E402
                                     parse_profile_row)
 from modules.members.store import roster_paths, save_roster  # noqa: E402
 from modules.registry import MODULES, step_groups  # noqa: E402
-from utils.cancel import cancellation  # noqa: E402
 
 CLAN_ID = 936302870583
-CLAN_POINT, MEMBERS_POINT = (10, 10), (20, 20)
-LIST_AREA = {"left": 100, "top": 100, "width": 200, "height": 100}
 
 # player id -> (name, rank, power, level), as the game has them.
 PLAYERS = {
@@ -67,6 +63,10 @@ def clan_answer(player_ids=tuple(PLAYERS)):
 
 def profiles_answer(player_ids):
     return record(PROFILES_ROUTE, [[profile_row(pid) for pid in player_ids]])
+
+
+def types_frame(*objects):
+    return tbcodec.Frame(0, 0, list(objects), 0, 0, None)
 
 
 class RosterTest(unittest.TestCase):
@@ -137,44 +137,40 @@ class RosterTest(unittest.TestCase):
                              (rows[1]["player_id"], rows[1]["name"], rows[1]["power"]))
 
 
-class ClanGame(FakeBrowser):
-    """
-    The game as the module drives it: the clan button answers with the clan, the
-    Members menu with the first batch of profiles, and each scroll of the list
-    with the next one.
-    """
+class ClanGame:
+    """GameLink as the module uses it: the clan's record, and each request of profiles answered in turn."""
 
-    def __init__(self, batches, sends_membership=True, list_views=3):
-        super().__init__()
+    def __init__(self, batches, sends_membership=True, starts=True, fails=False):
         self.batches = [list(batch) for batch in batches]
-        self.sends_membership = sends_membership
-        self.list_views = list_views
-        self.feed = None            # the listener's on_record, once it is listening
-        self.clicks = []
-        self.scrolls = 0
         self.pending = []
+        self.sends_membership = sends_membership
+        self.starts = starts
+        self.fails = fails
+        self.clan_requests = 0
+        self.profile_requests = []
+        self.running = False
 
-    def click(self, x, y, delay=0.0, clicks=1):
-        self.clicks.append((x, y))
-        if (x, y) == CLAN_POINT:
+    def start(self):
+        self.running = self.starts
+        return self.starts
+
+    def stop(self):
+        self.running = False
+
+    def clan_id(self):
+        return CLAN_ID
+
+    def call(self, route, objects):
+        if self.fails:
+            raise GameLinkError("the game did not answer route 15000")
+        if route == CLAN_ROUTE:
+            self.clan_requests += 1
             self.pending = [list(batch) for batch in self.batches]
-            self.scrolls = 0
-            if self.sends_membership:
-                self.feed(clan_answer())
-        elif (x, y) == MEMBERS_POINT:
-            self._send_batch()
-
-    def scroll_down(self, x, y, repetitions=5):
-        self.scrolls += 1
-        self._send_batch()
-
-    def _send_batch(self):
-        if self.pending:
-            self.feed(profiles_answer(self.pending.pop(0)))
-
-    def capture(self, region=None, scale=1.0):
-        # The list shows another picture at each scroll, until its end.
-        return np.full((4, 4, 3), 60 * min(self.scrolls, self.list_views), dtype=np.uint8)
+            members = tuple(PLAYERS) if self.sends_membership else ()
+            return [types_frame([[clan_record(members)]])]
+        self.profile_requests.append([player[0] for player in objects[0]])
+        batch = self.pending.pop(0) if self.pending else []
+        return [types_frame([[profile_row(pid) for pid in batch]])]
 
 
 class MembersModuleTest(unittest.TestCase):
@@ -193,42 +189,13 @@ class MembersModuleTest(unittest.TestCase):
         self.calibration = Calibration(step_groups(), os.path.join(self.folder, "calibration.json"),
                                        os.path.join(self.folder, "refs"))
         self.calibration.set_viewport(1000, 800)
-        for name in ("profile_menu_button",):
-            self.calibration.set_point(name, 5, 5)
-        for name in ("profiles_list_area", "profile_name_display_area"):
-            self.calibration.regions[name] = {"left": 1, "top": 1, "width": 40, "height": 20}
-        self.calibration.set_point("clan_button", *CLAN_POINT)
-        self.calibration.set_point("clan_members_button", *MEMBERS_POINT)
-        self.calibration.regions["clan_members_list"] = dict(LIST_AREA)
         self.calibration.use_viewport(1000, 800)
 
-        self.listeners = []
         test = self
-
-        class Listener:
-            """Stands in for the second CDP connection: the fake game feeds the collector itself."""
-
-            def __init__(self, **kwargs):
-                self.running = False
-                self.on_record = kwargs["on_record"]
-                test.listeners.append(self)
-
-            def start(self):
-                self.running = True
-                test.game.feed = self.on_record
-                return test.listening
-
-        Listener.stop = lambda listener: setattr(listener, "running", False)
-        self.listening = True
-
-        # The waits are for a real game; here the clock moves as fast as it is slept.
-        clock = types.SimpleNamespace(now=0.0)
         patches = [
-            mock.patch.object(members_module, "TrafficListener", Listener),
+            mock.patch.object(game_link, "GameLink", lambda **_kwargs: test.game),
             mock.patch.object(members_module, "save_roster",
                               lambda roster, when, by="": save_roster(roster, when, by, self.folder)),
-            mock.patch.object(members_module, "time", types.SimpleNamespace(time=lambda: clock.now)),
-            mock.patch.object(cancellation, "sleep", lambda seconds: setattr(clock, "now", clock.now + seconds)),
         ]
         for patch in patches:
             patch.start()
@@ -239,7 +206,7 @@ class MembersModuleTest(unittest.TestCase):
 
     def module(self, game):
         self.game = game
-        self.ctx = FakeContext(self.config, self.calibration, browser=game)
+        self.ctx = FakeContext(self.config, self.calibration)
         return MembersModule(self.ctx)
 
     def saved(self):
@@ -256,35 +223,26 @@ class MembersModuleTest(unittest.TestCase):
         self.assertEqual("members", MembersModule.profile_summary(self.alpha))
         self.assertEqual("", MembersModule.profile_summary(self.beta))
 
-    def test_the_whole_clan_in_one_answer_is_saved_without_scrolling(self):
+    def test_the_whole_clan_is_saved_from_the_games_answers(self):
         result = self.module(ClanGame([list(PLAYERS)])).run_for_profile(self.alpha)
 
         self.assertTrue(result["success"], result)
         self.assertEqual((5, "LPL", CLAN_ID), (result["members"], result["clan_tag"], result["clan_id"]))
-        self.assertEqual([CLAN_POINT, MEMBERS_POINT], self.game.clicks)
-        self.assertEqual(0, self.game.scrolls)
+        self.assertEqual([list(PLAYERS)], self.game.profile_requests)
         saved = self.saved()
         self.assertEqual("Main / Alpha", saved["read_by"])
         self.assertEqual([("Alok BR", 644245120340, 1660747555), ("Ventura", 463856535987, 1874523405)],
                          [(m["name"], m["player_id"], m["power"]) for m in saved["members"][:2]])
-        self.assertFalse(self.listeners[0].running, "the listener is stopped")
-        self.assertEqual(1, self.ctx.game_state.closed, "the clan window is closed for whatever runs next")
+        self.assertFalse(self.game.running, "the link is stopped")
+        self.assertEqual(0, self.ctx.game_state.closed, "no window was opened")
 
-    def test_the_list_is_scrolled_only_for_the_members_that_did_not_come(self):
+    def test_a_list_that_comes_short_is_asked_for_again_and_then_given_up(self):
         ids = list(PLAYERS)
-        result = self.module(ClanGame([ids[:2], ids[2:4], ids[4:]])).run_for_profile(self.alpha)
-
-        self.assertTrue(result["success"], result)
-        self.assertEqual(2, self.game.scrolls, "one scroll per batch still owed, and no more")
-        self.assertEqual(5, len(self.saved()["members"]))
-
-    def test_a_list_that_ends_short_is_asked_for_again_and_then_given_up(self):
-        ids = list(PLAYERS)
-        result = self.module(ClanGame([ids[:2], ids[2:4]])).run_for_profile(self.alpha)
+        result = self.module(ClanGame([ids[:4]])).run_for_profile(self.alpha)
 
         self.assertEqual((False, True), (result["success"], result["retry"]))
         self.assertIn("4 of 5", result["reason"])
-        self.assertEqual([CLAN_POINT, MEMBERS_POINT] * 2, self.game.clicks, "the clan window was opened again")
+        self.assertEqual(2, self.game.clan_requests)
         self.assertIsNone(self.saved(), "a roster with members missing is not saved")
 
     def test_without_the_membership_nothing_is_saved(self):
@@ -294,16 +252,11 @@ class MembersModuleTest(unittest.TestCase):
         self.assertIn("membership", result["reason"])
         self.assertIsNone(self.saved())
 
-    def test_nothing_is_clicked_without_the_calibration_or_the_listener(self):
-        self.listening = False
-        result = self.module(ClanGame([list(PLAYERS)])).run_for_profile(self.alpha)
-        self.assertEqual((False, True, []), (result["success"], result["retry"], self.game.clicks))
-
-        self.listening = True
-        del self.calibration.points["clan_members_button"]
-        result = self.module(ClanGame([list(PLAYERS)])).run_for_profile(self.alpha)
-        self.assertEqual((False, False, []), (result["success"], result["retry"], self.game.clicks))
-        self.assertIn("Clan: Members", result["reason"])
+    def test_a_game_that_cannot_be_asked_is_tried_again_later(self):
+        for game in (ClanGame([], starts=False), ClanGame([], fails=True)):
+            result = self.module(game).run_for_profile(self.alpha)
+            self.assertEqual((False, True), (result["success"], result["retry"]))
+            self.assertFalse(game.running)
 
     def with_site(self, answer=None, error=None):
         """Gives Alpha a clan site and stands in for it: returns what was sent there."""
@@ -353,7 +306,7 @@ class MembersModuleTest(unittest.TestCase):
     def test_a_short_list_is_never_sent_to_the_site(self):
         sent = self.with_site()
         ids = list(PLAYERS)
-        result = self.module(ClanGame([ids[:2], ids[2:4]])).run_for_profile(self.alpha)
+        result = self.module(ClanGame([ids[:4]])).run_for_profile(self.alpha)
 
         self.assertFalse(result["success"])
         self.assertEqual([], sent, "members missing from the list would be made inactive on the site")
@@ -390,10 +343,9 @@ class MembersModuleTest(unittest.TestCase):
         self.assertEqual([], summary["failures"])
         self.assertEqual(["Alpha"], self.ctx.profiles.switched, "Beta did not ask for it and is not visited")
         self.assertEqual(5, len(self.saved()["members"]))
-        # Once a day: the next start of the same day leaves the clan window alone.
-        self.game.clicks.clear()
+        # Once a day: the next start of the same day does not ask again.
         ModuleRunner(self.ctx, [module], schedule).run()
-        self.assertEqual([], self.game.clicks)
+        self.assertEqual(1, self.game.clan_requests)
 
 
 if __name__ == "__main__":

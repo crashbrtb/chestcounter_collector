@@ -12,7 +12,9 @@ process still lands in the same file as the rest of the run.
 import logging
 import os
 import sys
+import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime
 from typing import Optional
 
@@ -23,6 +25,30 @@ DEFAULT_LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(_
 logger = logging.getLogger("TBCollector")
 logger.setLevel(logging.INFO)
 _configured_dir: Optional[str] = None
+_speaker = threading.local()
+
+
+class _AccountPrefix(logging.Filter):
+    """With accounts working at once, says on each line whose it is."""
+
+    def filter(self, record):
+        name = getattr(_speaker, "name", "")
+        if name:
+            record.msg, record.args = f"[{name}] {record.getMessage()}", ()
+        return True
+
+
+logger.addFilter(_AccountPrefix())
+
+
+@contextmanager
+def log_as(name: str):
+    """What this thread logs inside the block starts with `name`."""
+    _speaker.name = name
+    try:
+        yield
+    finally:
+        _speaker.name = ""
 
 
 def _console_handler(level: int) -> logging.Handler:

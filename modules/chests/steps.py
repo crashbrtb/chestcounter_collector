@@ -1,6 +1,7 @@
 """
-The chest module's own calibration steps: the way into the gifts panel and the
-three marks that describe one chest.
+The chest module's calibration steps: the way into the gifts panel and the three
+marks that describe one chest. They are only used to picture a chest type met for
+the first time (screen.py); everything else goes over the network.
 
 They follow the shared steps (store, profiles) in the wizard, and are in the
 order of a real collection: each one leaves the game on the screen the next one
@@ -19,9 +20,6 @@ STEPS = (
     Step("gifts_tab", "click", "Gifts tab",
          "Click the standard gifts tab.",
          acts=True),
-    Step("triumphal_gifts_tab", "click", "Triumphal gifts tab",
-         "Click the triumphal gifts tab.",
-         acts=True),
     Step("chest_area", "area", "Chest text",
          "Mark the area where the CHEST NAME, player, and source appear.\n"
          "Include the TIME LEFT counter on the right: it is what dates the chest.\n"
@@ -30,14 +28,10 @@ STEPS = (
     Step("open_button_area", "area", "Search area for 'Open' button",
          "Mark the area where the OPEN chest button appears, for that same first chest.\n"
          "Can be generous: the button is located by image matching inside it."),
-    # Never pressed by the wizard (`acts` stays off): clicking it consumes a real
-    # chest that nothing would record.
+    # Never pressed (`acts` stays off): clicking it consumes a real chest.
     Step("open_button", "region", "Open button",
          "Mark only the button to open the chest, tightly.\n"
          "This image is the reference searched for each chest.\n"
-         "It is never clicked automatically: that would open a chest nothing records."),
+         "It is never clicked: it only tells where each chest is on the panel."),
 )
 
-# What a collection cannot start without. The two tab steps are left out on
-# purpose: an uncalibrated tab is skipped with a warning, as it always was.
-REQUIRED_STEPS = ("clan_button", "gift_button", "chest_area", "open_button_area", "open_button")

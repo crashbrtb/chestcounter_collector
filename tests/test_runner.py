@@ -8,12 +8,13 @@ from datetime import datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.settings import AccountConfig, ProfileConfig  # noqa: E402
-from core.runner import ModuleRunner, RunnerError  # noqa: E402
+from core.runner import ModuleRunner, RunAlreadyActive, RunnerError  # noqa: E402
 from core.schedule import SCHEDULE_DAILY  # noqa: E402
 from fakes import Clock, FakeContext, make_calibration, make_config, make_schedule  # noqa: E402
 from modules.base_module import BaseModule  # noqa: E402
 from modules.chests import ChestCollector  # noqa: E402
 from modules.events import EventsModule  # noqa: E402
+from utils.run_lock import RunLock  # noqa: E402
 
 
 class Scripted(BaseModule):
@@ -49,7 +50,7 @@ class Chests(Scripted):
 
 class Events(Scripted):
     key, title = "events", "Tournament rankings"
-    required_steps = EventsModule.required_steps
+    required_steps = ("journal_button",)
     configured_for = classmethod(lambda cls, profile: EventsModule.configured_for(profile))
 
 
@@ -67,12 +68,42 @@ class RunnerTest(unittest.TestCase):
     def runner(self, complete=True):
         self.ctx = FakeContext(self.config, make_calibration(self.tmp.name, self.config, complete))
         self.chests, self.events = Chests(self.ctx, self.log), Events(self.ctx, self.log)
-        return ModuleRunner(self.ctx, [self.chests, self.events], make_schedule(self.tmp.name, self.clock))
+        return ModuleRunner(self.ctx, [self.chests, self.events], make_schedule(self.tmp.name, self.clock),
+                            lock_path=self.lock_path)
+
+    @property
+    def lock_path(self):
+        return os.path.join(self.tmp.name, "run.lock")
 
     def run_again(self, **kwargs):
         """A later start of the application: new process, same files."""
         self.log.clear()
         return self.runner().run(**kwargs)
+
+    # -------------------------------------------------------- one at a time
+    def test_a_run_does_not_start_while_another_holds_the_lock(self):
+        other = RunLock(self.lock_path)
+        self.assertTrue(other.acquire())
+        try:
+            with self.assertRaises(RunAlreadyActive):
+                self.runner().run()
+            self.assertEqual([], self.log)
+            self.assertEqual([], self.ctx.profiles.switched)
+        finally:
+            other.release()
+
+        self.runner().run()
+        self.assertIn(("chests", "Alpha"), self.log)
+
+    def test_the_lock_is_released_when_the_run_fails(self):
+        runner = self.runner()
+        runner._locked_run = lambda *args: (_ for _ in ()).throw(RuntimeError("boom"))
+        with self.assertRaises(RuntimeError):
+            runner.run()
+
+        other = RunLock(self.lock_path)
+        self.assertTrue(other.acquire())
+        other.release()
 
     # ------------------------------------------------------------- the order
     def test_each_profile_gets_the_modules_set_up_for_it_chests_first(self):
@@ -193,7 +224,7 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual([], self.log)
         self.assertEqual({("chests", "Alpha"), ("events", "Alpha"), ("chests", "Beta")},
                          {(f["module"], f["profile"]) for f in summary["failures"]})
-        self.assertEqual(1, self.ctx.browser.restarts, "nothing done on the account: one fresh browser, one retry")
+        self.assertEqual(1, self.ctx.browser.restarts, "a fresh browser for the retry")
 
     def test_a_module_whose_screens_were_never_calibrated_is_left_out_and_the_rest_runs(self):
         summary = self.runner(complete=False).run()
@@ -204,12 +235,12 @@ class RunnerTest(unittest.TestCase):
         self.assertIn("Incomplete calibration", failure["reason"])
         self.assertIn("Journal button", failure["reason"])
 
-    def test_without_the_shared_steps_nothing_starts(self):
+    def test_a_run_that_cannot_start_says_why(self):
         runner = self.runner()
-        self.ctx.calibration.forget("profile_menu_button")
+        self.ctx.calibration.out_of_bounds = lambda: ["clan_button"]
         with self.assertRaises(RunnerError) as refused:
             runner.run()
-        self.assertIn("Profile menu", str(refused.exception))
+        self.assertIn("OUTSIDE the page", str(refused.exception))
         self.assertEqual("Execution cannot start: " + str(refused.exception).split(": ", 1)[1],
                          self.chests.ended["error"], "the modules hear how the run ended")
         self.assertEqual(0, self.ctx.browser_starts)

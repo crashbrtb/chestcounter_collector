@@ -6,12 +6,12 @@ One search, for one profile and so for one clan site (module.py starts it):
    search, or, before the first one, the end of the newest tournament on the
    site; with a margin of overlap (CUTOFF_MARGIN), since looking at a
    tournament twice costs nothing but missing one loses it;
-2. the mapper opens each "Your Clanmates' results in ..." card, newest first,
-   presses "Show details" and scrolls the ranking until the players' names
-   arrive, and stops once it reaches tournaments older than that point - or
-   cards received more days ago than the search was told to look back
-   (MapperOptions.max_age_days, read off the cards: "yesterday", "7 days ago");
-3. the names read off the cards go to the site's catalogue;
+2. the mapper asks the game for the list, newest first, and for the ranking of
+   each card of the clan's results with its players' names, and stops once it
+   reaches entries older than that point - or more days old than the search was
+   told to look back (MapperOptions.max_age_days);
+3. new types go to the site's catalogue with a picture, for a person to name; their
+   rankings wait, and the search is not complete until they are named;
 4. asks the site which of the tournaments found it already has, and sends
    the rest. When every player has a name the site is asked to publish
    (close) it right away; otherwise it stays a draft for review;
@@ -29,7 +29,7 @@ Nothing is sent twice:
   (signature()), so a draft is only sent again when it gained names.
 
 Nothing here touches the window or the network directly, so the whole run can
-be tested with the fake game of tests/test_events_mapper.py and a fake site.
+be tested with the fake feed of tests/test_events_mapper.py and a fake site.
 """
 from __future__ import annotations
 
@@ -60,7 +60,7 @@ FINISH_TEXT = {
     mapper.FINISH_CUTOFF: "reached the last complete search",
     mapper.FINISH_DAYS: "reached the limit of days to look back",
     mapper.FINISH_MAX_PAGES: "page limit",
-    mapper.FINISH_NO_JOURNAL: "the Journal did not open",
+    mapper.FINISH_NO_JOURNAL: "the game stopped giving the Journal",
 }
 
 
@@ -95,7 +95,6 @@ class Summary:
     catalogue: List[dict] = field(default_factory=list)
     outcomes: List[Outcome] = field(default_factory=list)
     skipped: int = 0
-    conflicts: List[str] = field(default_factory=list)
 
     @property
     def opened(self) -> int:
@@ -104,6 +103,10 @@ class Summary:
     @property
     def unanswered(self) -> int:
         return sum(1 for c in self.cards if c.status == mapper.STATUS_NO_ANSWER)
+
+    @property
+    def nameless(self) -> int:
+        return sum(1 for c in self.cards if c.status == mapper.STATUS_NO_NAME)
 
     @property
     def published(self) -> int:
@@ -119,10 +122,12 @@ class Summary:
 
     @property
     def text(self) -> str:
-        out = (f"{self.opened} tournament(s) opened, {self.published} closed on the site, {self.for_review} for review, "
+        out = (f"{self.opened} tournament(s) read, {self.published} closed on the site, {self.for_review} for review, "
                f"{self.skipped} already on the site")
         if self.failed:
             out += f", {self.failed} with an error"
+        if self.nameless:
+            out += f", {self.nameless} waiting for a name"
         out += f" · {FINISH_TEXT.get(self.reason, self.reason)}"
         out += " · complete search" if self.complete else " · incomplete search: the next one goes back to the same point"
         return out
@@ -243,21 +248,6 @@ def send_found(
     return outcomes, skipped
 
 
-def trusted_cards(cards: List[mapper.MappedCard]) -> List[mapper.MappedCard]:
-    """Mapped cards whose name is not in conflict (see mapper.conflicts())."""
-    mapped = [c for c in cards if c.status == mapper.STATUS_MAPPED and c.game_type is not None]
-    names_by_key: Dict[str, set] = {}
-    keys_by_name: Dict[str, set] = {}
-    for card in mapped:
-        key = mapper.catalogue_key(card.game_type, card.ranking)
-        names_by_key.setdefault(key, set()).add(mapper.normalize(card.name))
-        keys_by_name.setdefault(mapper.normalize(card.name), set()).add(key)
-
-    return [c for c in mapped
-            if len(names_by_key[mapper.catalogue_key(c.game_type, c.ranking)]) == 1
-            and len(keys_by_name[mapper.normalize(c.name)]) == 1]
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -267,36 +257,34 @@ class AutoSearch:
 
     def __init__(
         self,
-        browser,
-        layout,
-        ocr,
+        feed,
+        take_picture: Callable[[int, int], object],
         collector: journal.JournalCollector,
         client: api.SiteClient,
         options: mapper.MapperOptions,
         local_info: Callable[[str], Optional[dict]],
         mark_sent: Callable[[str, dict], None],
         catalogue_name: Callable[[journal.Tournament], str],
+        has_picture: Callable[[journal.Tournament], bool],
         client_version: str,
         auto_publish: bool = True,
         on_log: Optional[Callable[[str], None]] = None,
         clock: Callable[[], float] = lambda: datetime.now(timezone.utc).timestamp(),
-        vision=None,
         use_site_cutoff: bool = True,
     ):
-        self.browser = browser
-        self.layout = layout
-        self.ocr = ocr
+        self.feed = feed
+        self.take_picture = take_picture
         self.collector = collector
         self.client = client
         self.options = options
         self.local_info = local_info
         self.mark_sent = mark_sent
         self.catalogue_name = catalogue_name
+        self.has_picture = has_picture
         self.client_version = client_version
         self.auto_publish = auto_publish
         self.on_log = on_log
         self.clock = clock
-        self.vision = vision
         # Off when the days to look back were raised: the site's last search
         # did not reach that far, so it is not where this one stops.
         self.use_site_cutoff = use_site_cutoff
@@ -329,38 +317,31 @@ class AutoSearch:
         # A run cancelled during the walk leaves through here as an exception:
         # nothing is sent and nothing is reported, so the next search goes back
         # to the same point.
-        self.runner = mapper.JournalMapper(self.browser, self.layout, self.ocr, self.collector, self.options,
-                                           on_log=self._log, vision=self.vision)
+        self.runner = mapper.JournalMapper(self.feed, self.collector, self.options, known_name=self.catalogue_name,
+                                           take_picture=self.take_picture, has_picture=self.has_picture,
+                                           on_log=self._log)
         summary.cards = self.runner.run()
         summary.reason = self.runner.finish_reason
         self._send(summary)
 
         summary.complete = (summary.reason in mapper.COMPLETE_REASONS and summary.unanswered == 0
-                            and summary.failed == 0)
+                            and summary.failed == 0 and summary.nameless == 0)
         if summary.unanswered:
             self._log(f"{summary.unanswered} tournament(s) without an answer from the game: the next search looks again.")
         self._report(summary)
         return summary
 
     def _send(self, summary: Summary) -> None:
-        # A name read differently for one type is not trusted: the site keeps its own.
-        summary.conflicts = mapper.conflicts(summary.cards)
-        for text in summary.conflicts:
-            self._log("CONFLICT: " + text)
-        cards = trusted_cards(summary.cards)
-        entries = mapper.catalogue_entries(cards)
+        entries = mapper.catalogue_entries(summary.cards)
         if entries:
             try:
                 summary.catalogue = self.client.send_catalog(entries)
             except api.ApiError as exc:
                 self._log(f"Catalogue not sent: {exc.message}")
-        names = {c.result_uid: c.name for c in cards if c.result_uid}
-
-        def name_for(t: journal.Tournament) -> str:
-            return names.get(t.result_uid) or self.catalogue_name(t)
+        waiting = {c.result_uid for c in summary.cards if c.status == mapper.STATUS_NO_NAME}
 
         summary.outcomes, summary.skipped = send_found(
-            self.client, self.collector.tournaments(), name_for, self.local_info, self.mark_sent,
+            self.client, [t for t in self.collector.tournaments() if t.result_uid not in waiting], self.catalogue_name, self.local_info, self.mark_sent,
             self.client_version, self.auto_publish, self._log,
         )
         if not summary.outcomes:
@@ -377,7 +358,7 @@ class AutoSearch:
                 "sent": len(summary.outcomes) - summary.failed,
                 "published": summary.published,
                 "for_review": summary.for_review,
-                "errors": summary.failed + summary.unanswered,
+                "errors": summary.failed + summary.unanswered + summary.nameless,
                 "client_version": self.client_version,
             })
         except api.ApiError as exc:

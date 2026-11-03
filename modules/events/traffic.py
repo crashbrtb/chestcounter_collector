@@ -54,6 +54,10 @@ def routes_of(data: bytes) -> list:
         return []
 
 
+class GameLinkError(RuntimeError):
+    """The game could not be asked, or refused. Never carries the request itself."""
+
+
 class TrafficListener:
     def __init__(
         self,

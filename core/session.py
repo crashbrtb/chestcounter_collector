@@ -23,21 +23,29 @@ So the browser profile is left alone and each run simply asks the page where it
 stands: already authenticated, or showing the login screen. Logging in becomes
 the exception rather than the routine.
 
-The cost is that a second account cannot be reached by wiping the first one's
-session. That is what `AccountConfig.browser_profile` is for - one browser
-profile per account, each keeping its own verified session - and the runner
-refuses to start rather than let two accounts share one session, which would
-collect the second account's chests into the first account's database.
+That is what `AccountConfig.browser_profile` is for - one Chrome folder per
+account, each keeping its own verified session - and the runner refuses to start
+rather than let two accounts share one, which would collect the second account's
+chests into the first account's database.
+
+The first login of a folder is a person's
+-----------------------------------------
+On a folder the game has not seen, it mails a code. Typing the password there
+would only send e-mails nobody will answer, so the form is not touched: the account
+stops, says so, and the others go on. Once the game has come up in a folder a small
+file there says so (`SESSION_MARK`), and from then on a dropped session is logged
+back into with the password, which the game accepts without a code.
 """
 
+import json
+import os
 import time
-from typing import Sequence, Tuple
+from typing import Any, Sequence, Tuple
 
 from config.settings import AccountConfig, ProfileConfig
-from core.vision import changed_fraction
 from utils.cancel import cancellation
 from utils.logger import logger
-from utils.text_utils import contains_name
+from utils.text_utils import normalize_name
 
 # Shared helpers for the page-side scripts below.
 #
@@ -143,6 +151,8 @@ MARK_LOGIN_FIELDS_JS = r"""
 })()
 """
 
+SESSION_MARK = "tb_counter_session_verified"
+
 # Where the page stands: form reachable, form present but closed, or logged in.
 LOGIN_STATE_JS = r"""
 (() => {
@@ -168,23 +178,32 @@ LOGIN_STATE_JS = r"""
     if (opener) opener.setAttribute('data-tbc-role', 'open-login');
   }
 
+  const canvas = Array.from(document.querySelectorAll('canvas')).some(visible);
+  // By how such fields are named, not measured on the game's own screen. The game
+  // being up rules it out, since it may have fields of its own that mention codes.
+  const CODE_FIELD = /verif|c[oó]digo|\bcode\b|otp|2fa|one.?time/i;
+  const codeField = Array.from(document.querySelectorAll('input')).some(el =>
+      visible(el) && TEXT_INPUT(el) && el.type !== 'password'
+      && (el.autocomplete === 'one-time-code'
+          || CODE_FIELD.test([el.name, el.id, el.placeholder, el.getAttribute('aria-label') || ''].join(' '))));
+
   return {
     form_open: openForm,
     form_in_dom: passwords.length > 0,
     opener: opener ? label(opener).slice(0, 40) : "",
-    canvas: Array.from(document.querySelectorAll('canvas')).some(visible),
+    canvas: canvas,
+    code_asked: codeField && !canvas,
   };
 })()
 """
 
 
-# The profile list is scrolled until it stops moving; this only caps a list that
-# somehow never settles.
-MAX_LIST_VIEWS = 8
-
-
 class SessionError(RuntimeError):
     pass
+
+
+class NeedsPerson(SessionError):
+    """Only someone at the keyboard can get past this: trying again, or a new browser, changes nothing."""
 
 
 class LoginManager:
@@ -193,7 +212,6 @@ class LoginManager:
     def __init__(self, browser, config: dict):
         self.browser = browser
         self.enabled = bool(config.get("enabled", True))
-        self.clear_between_accounts = bool(config.get("clear_session_between_accounts", False))
         self.open_login_selector = (config.get("open_login_selector") or "").strip()
         self.email_selector = (config.get("email_selector") or "").strip()
         self.password_selector = (config.get("password_selector") or "").strip()
@@ -226,7 +244,7 @@ class LoginManager:
             return bool(self.browser.element_rect(self.logged_in_selector))
 
         state = self.state()
-        if state.get("form_open"):
+        if state.get("form_open") or state.get("code_asked"):
             return False
         # The game canvas being up outranks a stray 'Log in' left in a footer:
         # if the game is rendering, the session is open.
@@ -399,6 +417,8 @@ class LoginManager:
         deadline = time.time() + self.wait_after_submit
         while time.time() < deadline:
             cancellation.check()
+            if self.state().get("code_asked"):
+                raise NeedsPerson(self._needs_person("the game asked for the code it sent by e-mail"))
             if self.is_logged_in():
                 cancellation.sleep(1.0)
                 if self.is_logged_in():
@@ -420,207 +440,249 @@ class LoginManager:
         self.browser.wait_for_load()
         self.wait_until_decidable(timeout=30.0)
 
+        if self.state().get("code_asked"):
+            raise NeedsPerson(self._needs_person("the game is asking for the code it sent by e-mail"))
         if self.is_logged_in():
-            logger.info(f"Session already authenticated in the browser profile; no login needed.")
+            logger.info("Session already authenticated in the browser profile; no login needed.")
             return True
+        if not self._folder_verified():
+            raise NeedsPerson(self._needs_person("this Chrome folder has never logged in"))
 
         logger.info("The game is showing the login screen.")
         return self.login(account)
 
-    def end_session(self):
-        """
-        Ends the session - only when the configuration asks for it.
+    def _mark_path(self) -> str:
+        return os.path.join(self.browser.user_data_dir, SESSION_MARK)
 
-        Off by default, and it should stay off for a single account: clearing
-        cookies costs an e-mail verification code on the next login. It exists
-        for the case of several accounts sharing one browser profile, where
-        there is no other way to reach the second account.
-        """
-        if not self.clear_between_accounts:
-            logger.debug("Keeping the session (clearing it would trigger the e-mail code).")
+    def _folder_verified(self) -> bool:
+        return os.path.exists(self._mark_path())
+
+    def remember_session(self):
+        """Notes that the game came up in this folder, so a dropped session may be logged back into."""
+        if self._folder_verified() or not self.state().get("canvas"):
             return
-        logger.info("Clearing the session as configured (the game may ask for an e-mail code).")
-        self.browser.clear_session()
-        self.browser.navigate()
+        try:
+            with open(self._mark_path(), "w", encoding="utf-8"):
+                pass
+        except OSError as exc:
+            logger.warning(f"Could not note the verified session in {self._mark_path()}: {exc}")
+
+    def _needs_person(self, why: str) -> str:
+        return (f"{why}. Log in by hand once: Accounts and profiles > Open window, and type the code. "
+                f"The next runs use that session (folder: {self.browser.user_data_dir}).")
+
+# Asks the game for its linked profiles and navigates to the target's auth token.
+# All of it happens inside the tab: the tokens never reach Python, and what comes
+# back is a status and the id of the profile, which is not a secret.
+_SWITCH_JS = r"""
+(() => {
+  return (async () => {
+    const CURRENT_AUTH = {
+      suid: window.app && window.app.config ? window.app.config.suid : null,
+      token: window.app && window.app.config ? (window.app.config.user_auth_token || (window.app.getGameStartDataResponse && window.app.getGameStartDataResponse.new_token)) : null,
+    };
+
+    if (!CURRENT_AUTH.suid || !CURRENT_AUTH.token) {
+      return "no_auth";
+    }
+
+    const restUrl = (window.app && window.app.restApiUrl) || "https://totalbattle.com/restapi/totalbattle/web/";
+    const deviceId = (window.app && window.app.deviceIdentifier) || "";
+
+    let resp;
+    try {
+      resp = await fetch(restUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-rpc-method": "GetLinkedAccountsInfo"
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: "switch-account",
+          method: "GetLinkedAccountsInfo",
+          params: [{
+            suid: CURRENT_AUTH.suid,
+            token: CURRENT_AUTH.token
+          }],
+          deviceIdentifier: deviceId
+        })
+      });
+    } catch (err) {
+      return "fetch_failed: " + (err && err.message ? err.message : String(err));
+    }
+
+    if (!resp.ok) {
+      return "http_error_" + resp.status;
+    }
+
+    let data;
+    try {
+      data = await resp.json();
+    } catch (err) {
+      return "json_parse_error";
+    }
+
+    if (data && data.error) {
+      return "rpc_error: " + (data.error.code || "") + " " + String(data.error.message || "").slice(0, 120);
+    }
+
+    const tethers = data && data.result && data.result.tethers;
+    if (!tethers || !tethers.length) {
+      return "no_tethers";
+    }
+
+    const targetName = %s;
+    const norm = (s) => (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+    const same = tethers.filter(t => norm(t.progress_short_info && t.progress_short_info.nickname) === norm(targetName));
+    if (same.length !== 1) {
+      return same.length ? "profile_ambiguous" : "profile_not_found";
+    }
+    const target = same[0];
+
+    // The id every request of that profile will carry, to tell it apart when it comes back.
+    const uid = target.progress_short_info.gameUid;
+    if (!uid) {
+      return "no_game_id";
+    }
+    const playerId = (BigInt(uid.initial) * (2n ** 32n) + BigInt(uid.sequence)).toString();
+
+    const siteUrl = (window.app && window.app.config && window.app.config.site_url)
+      ? window.app.config.site_url.replace(/\/$/, "")
+      : "https://totalbattle.com";
+    const origin = siteUrl.startsWith("http") ? siteUrl : "https:" + siteUrl;
+    let switchUrl = origin + "/login/bytokenoauth/?token=" + encodeURIComponent(target.token);
+    if (target.suid) {
+      switchUrl += "&suid=" + encodeURIComponent(target.suid);
+    }
+    // Without it the page expects to be a child of the game's and stays blank in the tab.
+    switchUrl += "&state=switchAccount";
+
+    setTimeout(() => {
+      window.location.href = switchUrl;
+    }, 50);
+
+    return "going:" + playerId;
+  })();
+})()
+"""
+
+
+# How long a profile is given to load, and how often it is looked at meanwhile.
+SWITCH_TIMEOUT = 180.0
+SWITCH_POLL = 5.0
 
 
 class ProfileSwitcher:
     """Moves between the profiles (cities) of the account currently logged in."""
 
-    def __init__(self, browser, ocr, vision, calibration, game_state, timing: dict):
+    def __init__(self, browser):
         self.browser = browser
-        self.ocr = ocr
-        self.vision = vision
-        self.calibration = calibration
-        self.game_state = game_state
-        self.switch_wait = float(timing.get("profile_switch_wait", 20.0))
-        self.click_delay = float(timing.get("click_delay", 0.5))
 
     def active_profile_name(self) -> str:
-        area = self.calibration.region("profile_name_display_area")
-        if not area:
+        """
+        The name of the profile the game is on, as the game says it; '' when it could not be asked.
+
+        Every request the game makes carries the id of the profile playing, and each
+        profile has its own, so this cannot take 'Crash BR' for 'Cash BR' the way a
+        reading of the screen could, and it does not depend on what is drawn. The
+        link is opened for each question and learns from the game's next request, so
+        the answer is about the game as it is now.
+        """
+        # Here and not at the top: the modules build on this package.
+        from modules.chests.game_link import GameLink
+        from modules.events.traffic import GameLinkError
+
+        link = GameLink(host=self.browser.host, port=self.browser.port, tab_id=self.browser.tab_id,
+                        url_filter=self.browser.url_filter,
+                        on_status=lambda text: logger.warning(f"Game link: {text}"))
+        if not link.start():
             return ""
-        return " ".join(line.text for line in self.ocr.read_lines(area)).strip()
+        try:
+            player = link.player_id
+            return link.player_names([player]).get(player, "")
+        except GameLinkError as exc:
+            logger.warning(f"Could not ask the game which profile it is on: {exc}")
+            return ""
+        finally:
+            link.stop()
 
     def active_among(self, names: Sequence[str]) -> str:
         """
-        Which of `names` is the profile on screen, or '' when it is none of them.
+        Which of `names` is the profile the game is on, or '' when it is none of them.
 
         The game opens on whichever profile was used last, so the runner asks
         this once, right after the board is clear, to start with that profile
-        instead of switching away from it and back later. The same two tests as
-        `is_active` apply - win the competition, and be spelled out in the
-        banner - because a wrong answer here would only reorder the run, but the
-        answer is logged and should not name a profile that is not there.
+        instead of switching away from it and back later.
         """
-        area = self.calibration.region("profile_name_display_area")
-        candidates = list(dict.fromkeys(name for name in names if name))
-        if not area or not candidates:
-            return ""
-        winner, text = self.ocr.identify(area, candidates)
-        return winner if winner and contains_name(winner, text) else ""
+        active = normalize_name(self.active_profile_name())
+        return next((name for name in names if name and normalize_name(name) == active), "") if active else ""
 
-    def is_active(self, profile_name: str, siblings: Sequence[str] = ()) -> bool:
-        """
-        Is `profile_name` the profile on screen?
+    def is_active(self, profile_name: str) -> bool:
+        """Is `profile_name` the profile the game is on? The whole name must be the same."""
+        return bool(self.active_among([profile_name]))
 
-        The banner is identified against every profile of the account, not
-        checked against this one alone: with names as close as 'Crash BR' and
-        'Cash BR', a yes/no test says yes to both.
-
-        Winning that competition is not enough either: it only covers the
-        profiles that are configured. With 'Cash BR' alone in the configuration,
-        a banner reading 'Crash BR' had no rival, won on similarity, and its
-        chests were recorded as Cash BR's. So the name must also be spelled out
-        in the banner - a misread costs a trip through the profile menu, a wrong
-        yes costs a database.
-        """
-        area = self.calibration.region("profile_name_display_area")
-        if not area:
-            logger.warning("'profile_name_display_area' is not calibrated; cannot confirm the active profile.")
-            return False
-
-        candidates = list(dict.fromkeys([profile_name, *[s for s in siblings if s]]))
-        winner, text = self.ocr.identify(area, candidates)
-        if winner != profile_name:
-            return False
-        if not contains_name(profile_name, text):
-            logger.warning(
-                f"The banner reads '{text}', which is close to '{profile_name}' but not the same name: "
-                f"treating it as a different profile."
+    def _evaluate_async(self, expression: str, timeout: float = 30.0) -> Any:
+        try:
+            result = self.browser.send(
+                "Runtime.evaluate",
+                {
+                    "expression": expression,
+                    "awaitPromise": True,
+                    "returnByValue": True,
+                },
+                timeout=timeout,
             )
-            return False
-        return True
+        except Exception as exc:
+            logger.warning(f"Failed to evaluate expression: {exc}")
+            return str(exc)
+        if result.get("exceptionDetails"):
+            text = (result["exceptionDetails"].get("text") or "").strip()
+            logger.warning(f"JS exception in evaluate_async: {text}")
+            return text
+        return result.get("result", {}).get("value")
 
-    def switch_to(self, profile: ProfileConfig, siblings: Sequence[str] = ()) -> bool:
+    def _is_playing(self, player_id: int) -> bool:
+        """Whether the page has loaded and the game's requests carry this profile's id. Quiet: it is polled."""
+        from modules.chests.game_link import GameLink
+
+        if self.browser.evaluate("document.readyState") != "complete":
+            return False
+        link = GameLink(host=self.browser.host, port=self.browser.port, tab_id=self.browser.tab_id,
+                        url_filter=self.browser.url_filter)
+        if not link.start():
+            return False
+        try:
+            return link.player_id == player_id
+        finally:
+            link.stop()
+
+    def switch_to(self, profile: ProfileConfig) -> bool:
         """
         Selects `profile`, or reports that it could not be reached.
 
-        The list is scrolled to the top before searching, then searched again
-        after scrolling down: the profile list is longer than its box, and a
-        profile that was simply below the fold used to be reported as missing.
+        It only counts when the game comes back carrying the id the list gave for that
+        name: a name alone could pass for a near-twin, and a wrong profile costs a database.
         """
-        missing = self.calibration.require("profile_menu_button", "profiles_list_area")
-        if missing:
-            raise SessionError(f"Incomplete calibration for switching profiles: {', '.join(missing)}")
-
-        self.game_state.prepare_board()
-
-        competitors = [name for name in siblings if name and name != profile.name]
-
-        if self.is_active(profile.name, siblings):
+        if self.is_active(profile.name):
             # Not a failure, and it looks like one from outside: the game opens on
             # whichever profile was last used, so the very first profile of a run
-            # is often already the right one and no menu is opened at all.
-            logger.info(
-                f"Profile '{profile.name}' is ALREADY active - skipping the profile menu on "
-                f"purpose and going straight to the chests."
-            )
+            # is often already the right one and nothing has to be switched.
+            logger.info(f"Profile '{profile.name}' is ALREADY active: going straight to its modules.")
             return True
 
-        menu_point = self.calibration.point("profile_menu_button")
-        list_area = self.calibration.region("profiles_list_area")
-
-        logger.info(f"Opening the profile menu at {menu_point}...")
-        before = self.browser.capture(scale=1.0)
-        self.browser.click(menu_point[0], menu_point[1], delay=1.5)
-
-        # Did the menu actually open? A click that misses is silent, and the run
-        # would go on to search a list that is not on screen and blame the OCR.
-        opened = changed_fraction(before, self.browser.capture(scale=1.0))
-        if opened < 0.01:
-            logger.error(
-                f"Clicking the profile menu at {menu_point} changed nothing on screen "
-                f"({opened:.1%}). The point is wrong for this page size, or something is on top "
-                f"of it. Recalibrate 'Profile menu' and use 'Test this step'."
-            )
+        status = self._evaluate_async(_SWITCH_JS % json.dumps(profile.name))
+        if not (isinstance(status, str) and status.startswith("going:")):
+            logger.error(f"Profile '{profile.name}' not switched: {status}")
             return False
-        logger.info(f"The profile menu click changed {opened:.0%} of the screen.")
+        player_id = int(status.split(":", 1)[1])
 
-        # The whole list is searched for the name spelled out before a merely
-        # similar line is accepted: a near-twin in the first view must not be
-        # clicked while the real profile sits below the fold. The looser pass
-        # is for a misread letter, and the banner check after the switch still
-        # has the last word.
-        for exact in (True, False):
-            if self._pick_from_list(profile, competitors, list_area, exact):
-                return self._confirm_switch(profile, siblings)
-
-        logger.error(f"Profile '{profile.name}' was not found in the profile list.")
-        self.browser.press_key("Escape", delay=0.5)
-        return False
-
-    def _pick_from_list(self, profile: ProfileConfig, competitors: Sequence[str],
-                        list_area: Tuple[int, int, int, int], exact: bool) -> bool:
-        """Scrolls the open profile list from the top and clicks `profile`; False when it is not there."""
-        center_x = list_area[0] + list_area[2] // 2
-        center_y = list_area[1] + list_area[3] // 2
-        self.browser.scroll_to_top(center_x, center_y)
-        cancellation.sleep(0.6)
-
-        how = "" if exact else ", accepting a close reading"
-        # Scroll until the list stops changing instead of a fixed two views: the
-        # number of profiles is whatever the account has, and a fixed number of
-        # looks either misses the last ones or wastes time on a short list.
-        for view in range(1, MAX_LIST_VIEWS + 1):
-            logger.info(f"Looking for profile '{profile.name}' in the list (view {view}{how})...")
-            found = self.ocr.find_text(list_area, profile.name, competitors=competitors, exact=exact)
-            if found:
-                self.browser.click(found.center[0], found.center[1], delay=1.5)
+        logger.info(f"Switching to profile '{profile.name}'; waiting for the game to load it...")
+        started = time.time()
+        while time.time() - started < SWITCH_TIMEOUT:
+            cancellation.sleep(SWITCH_POLL)
+            if self._is_playing(player_id):
+                logger.info(f"Profile '{profile.name}' is active after {time.time() - started:.0f}s.")
                 return True
-
-            list_before = self.browser.capture(list_area, scale=1.0)
-            self.browser.scroll_down(center_x, center_y)
-            cancellation.sleep(0.8)
-            if changed_fraction(list_before, self.browser.capture(list_area, scale=1.0)) < 0.01:
-                logger.info("The list did not move: this is the end of it.")
-                break
-        return False
-
-    def _confirm_switch(self, profile: ProfileConfig, siblings: Sequence[str] = ()) -> bool:
-        """Clicks the confirmation dialog, if the game asks for one, then waits it out."""
-        if self.calibration.is_calibrated("profile_switch_confirm"):
-            reference = self.calibration.ref_path("profile_switch_confirm")
-            search_area = self.calibration.region("profile_switch_confirm")
-            # Search the whole page: the dialog is centred and does not always
-            # land where it was during calibration.
-            match = self.vision.find(reference, None, base_scale=self.calibration.image_scale)
-            if match:
-                self.browser.click(match[0] + match[2] // 2, match[1] + match[3] // 2, delay=1.0)
-                logger.info("Profile switch confirmed.")
-            elif search_area:
-                logger.info("No confirmation dialog appeared; continuing.")
-
-        logger.info(f"Waiting {self.switch_wait:.0f}s for the game to load profile '{profile.name}'...")
-        cancellation.sleep(self.switch_wait)
-        self.browser.wait_for_load(timeout=self.switch_wait)
-        self.game_state.prepare_board()
-
-        if self.is_active(profile.name, siblings):
-            return True
-
-        logger.error(
-            f"After switching, the active profile is not '{profile.name}' "
-            f"(reads '{self.active_profile_name()}')."
-        )
+        logger.error(f"The game did not come back on profile '{profile.name}' in {SWITCH_TIMEOUT:.0f}s.")
         return False

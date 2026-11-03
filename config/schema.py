@@ -5,7 +5,7 @@ The GUI, the default configuration file and the validation of config.json are
 all generated from this single list, so a new parameter only has to be declared
 here once to become visible, editable and persisted.
 
-The sections below are the ones every module shares (browser, login, OCR...).
+The sections below are the ones every module shares (browser, login...).
 Each feature module declares its own parameters next to its code, and they are
 stored under "modules" in config.json: see `module_sections()`.
 
@@ -56,6 +56,10 @@ SECTIONS: List[Section] = [
             Field("stop_on_error", "bool", "Stop on first error", False,
                   "When enabled, a failing profile stops the entire run. When disabled, the collector "
                   "logs the error and continues to the next profile."),
+            Field("parallel_accounts", "int", "Accounts at the same time", 4,
+                  "How many accounts work at once, each in its own Chrome window. The profiles of an "
+                  "account are always one after the other. 1 = one account at a time.",
+                  minimum=1, maximum=4),
             Field("retries_per_profile", "int", "Retries per profile", 2,
                   "How many times a profile is retried before being considered failed.",
                   minimum=1, maximum=5),
@@ -63,7 +67,7 @@ SECTIONS: List[Section] = [
                   "When no profile of an account can be collected (usually the game froze in Chrome "
                   "and needs F5), closes the browser, opens a fresh one and tries the account once more."),
             Field("log_level", "choice", "Log level", "INFO",
-                  "DEBUG logs every OCR reading and every click.",
+                  "DEBUG logs every click.",
                   choices=("DEBUG", "INFO", "WARNING", "ERROR")),
             Field("log_dir", "path", "Log folder", "execution_logs",
                   "Relative to the project folder, or an absolute path."),
@@ -81,8 +85,9 @@ SECTIONS: List[Section] = [
         [
             Field("cdp_host", "str", "CDP Host", "127.0.0.1",
                   "Almost always 127.0.0.1."),
-            Field("cdp_port", "int", "CDP Port", 9222,
-                  "Remote debugging port. Change if another Chrome instance is using 9222.",
+            Field("first_cdp_port", "int", "First debugging port", 9322,
+                  "Accounts without a port get the next free one from here. Each account's port is "
+                  "shown, and can be changed, in Accounts and profiles.",
                   minimum=1024, maximum=65535),
             Field("game_url", "str", "Game URL", "https://totalbattle.com/en/",
                   "URL opened at the beginning of each account session."),
@@ -90,12 +95,12 @@ SECTIONS: List[Section] = [
                   "URL substring used to find the game tab among open tabs."),
             Field("executable_path", "path", "Chrome executable path", "",
                   "Empty = search for Chrome, Edge, and Brave in standard Windows paths."),
-            Field("user_data_dir", "path", "Browser profile directory", "",
-                  "Chrome data folder used by the collector. Empty = "
-                  "%USERPROFILE%/.total_battle_chest_profile. A dedicated profile avoids "
-                  "interfering with your daily Chrome browser."),
+            Field("profiles_dir", "path", "Folder of Chrome profiles", "",
+                  "Where new accounts get their Chrome folder. Empty = "
+                  "%USERPROFILE%/.total_battle_counter_profiles. An account that already has a folder keeps it."),
             Field("reuse_existing", "bool", "Reuse open browser", True,
-                  "If the CDP port is already responding, connects to it instead of launching a new browser."),
+                  "If the account's window is already open, connects to it instead of restarting it. "
+                  "A window of another folder on that port is never used."),
             Field("start_maximized", "bool", "Start maximized", True, ""),
             Field("window_width", "int", "Window width", 1920,
                   "Used only when 'Start maximized' is disabled.", minimum=800, maximum=7680),
@@ -113,10 +118,6 @@ SECTIONS: List[Section] = [
         [
             Field("enabled", "bool", "Automatic login", True,
                   "Disable if you prefer leaving the session already logged into the browser profile."),
-            Field("clear_session_between_accounts", "bool", "Clear session between accounts", False,
-                  "KEEP DISABLED. Clearing cookies causes the game to treat the browser as a new device "
-                  "and email a verification code — which an unattended run cannot answer. "
-                  "For multiple accounts, assign each its own 'Browser profile' directory in Accounts and profiles."),
             Field("open_login_selector", "str", "CSS selector for login opener button", "",
                   "The totalbattle.com login form is in the HTML on page load but hidden: "
                   "you must click 'Log in' before typing. Empty = automatically find a visible "
@@ -142,72 +143,12 @@ SECTIONS: List[Section] = [
         "Timing",
         "Delays between actions. Increase if the game is sluggish; decrease to collect faster.",
         [
-            Field("click_delay", "float", "Delay after click (s)", 0.5, "", minimum=0.0, maximum=10.0),
             Field("action_delay", "float", "Delay between actions (s)", 0.35, "", minimum=0.0, maximum=10.0),
-            Field("chest_click_delay", "float", "Chest click delay (s)", 0.25,
-                  "Interval between opening a chest and reading the next.", minimum=0.0, maximum=5.0),
-            Field("profile_switch_wait", "float", "Profile switch wait (s)", 20.0,
-                  "Time the game takes to reload after switching cities.",
-                  minimum=1.0, maximum=180.0),
             Field("between_profiles_wait", "float", "Delay between profiles (s)", 3.0, "",
                   minimum=0.0, maximum=60.0),
             Field("store_close_wait", "float", "Store close wait (s)", 15.0,
                   "Time window in which the store is searched and closed before starting.",
                   minimum=0.0, maximum=120.0),
-        ],
-    ),
-    Section(
-        "ocr",
-        "OCR",
-        "Reading names on screen. RapidOCR (PaddleOCR/ONNX) reads accents and foreign names "
-        "that Tesseract struggles with.",
-        [
-            Field("engine", "choice", "OCR Engine", "auto",
-                  "auto = both engines combined when installed: RapidOCR reads, and Tesseract is "
-                  "consulted only about words that mix digits with digit-shaped letters, where "
-                  "RapidOCR reads the zeros of 'T6000SK' as the letter o. Measured over 314 real "
-                  "panels: 'auto' takes 557 ms per panel and got 8 of 257 contested lines wrong, "
-                  "'tesseract' takes 258 ms and got 204 wrong. Forcing 'tesseract' saves about "
-                  "300 ms per panel and misspells roughly one line in twenty.",
-                  choices=("auto", "hybrid", "rapidocr", "tesseract")),
-            Field("threads", "int", "RapidOCR threads", 4,
-                  "CPU cores used by the neural engine. Measured on 40 real panels: 1 thread "
-                  "1271 ms per read, 2 threads 689 ms, 4 threads 524 ms, and 8 threads back to "
-                  "1269 ms as the cores contend. More is not better past 4. If the log warns that "
-                  "RapidOCR ignored the setting, this box is doing nothing and reads are running "
-                  "at the package default — the key moved between package versions once already. "
-                  "Ignored when 'Use GPU' is on.",
-                  minimum=1, maximum=32),
-            Field("use_gpu", "bool", "Use GPU (DirectML)", False,
-                  "Runs RapidOCR's detection and recognition models on the graphics card instead "
-                  "of the CPU, through DirectML — it works with any DirectX 12 GPU (NVIDIA, AMD, "
-                  "Intel) without CUDA or cuDNN to install and match. Measured on an RTX 4050 with "
-                  "the current PP-OCRv6 models: 403 ms per panel on 4 CPU threads against 103 ms "
-                  "on the GPU, same text read back both ways. Requires the 'onnxruntime-directml' "
-                  "package in place of plain 'onnxruntime' (see README) — without it this box "
-                  "does nothing and RapidOCR logs a warning, then reads on the CPU as before. Try "
-                  "'tools/benchmark_ocr.py' on each machine before turning this on in production: "
-                  "an older or integrated GPU can come out slower than the CPU, and it should be "
-                  "measured, not assumed."),
-            Field("capture_scale", "float", "Capture upscale factor", 2.0,
-                  "The region is rendered directly by Chrome at this scale, without interpolation. "
-                  "Benchmarked: 2.0 reads identically to 3.0 and halves capture time; 1.0 makes errors.",
-                  minimum=1.0, maximum=6.0),
-            Field("min_confidence", "float", "Minimum confidence (%)", 45.0,
-                  "Readings below this threshold are discarded.", minimum=0.0, maximum=100.0),
-            Field("name_match_threshold", "float", "Name match threshold", 0.75,
-                  "How closely a read name must match the configured name to count as the same profile.",
-                  minimum=0.4, maximum=1.0),
-            Field("use_known_names", "bool", "Match with database names", True,
-                  "Compares each read name with known database records. Only corrects formatting differences "
-                  "(spacing, punctuation, capitalization) and entries in player_name_mappings — similar names "
-                  "are NEVER merged, as an erroneous merge leaves no trace to undo. Also skips the slower "
-                  "engine when all three fields are already recognized."),
-            Field("tesseract_lang", "str", "Tesseract language", "por",
-                  "Single language model. Benchmarked: 'por+eng' costs 446 ms and 'por' alone costs 310 ms "
-                  "with identical results — Portuguese covers the Latin alphabet."),
-            Field("tesseract_path", "path", "tesseract.exe path", "",
-                  "Empty = search in PATH and standard Windows paths."),
         ],
     ),
     Section(

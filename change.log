@@ -1,3 +1,99 @@
+Next  - New module, Shield of Peace: asks the game over the network when the city's shield ends and, with less
+    than a day left ('Renew with less than', 24 hours by default), buys one with gold and activates it. Off until
+    turned on per profile in Accounts and profiles > Modules.
+
+Next  - Accounts work at the same time, each in a Chrome window of its own; the profiles of an account stay one
+    after the other. 'Accounts at the same time' (Execution, 4 by default, 1 for the old order).
+  - Each account has its own debugging port and Chrome folder, written down the first time and shown in
+    Accounts and profiles, where they can be changed. Ports start at 'First debugging port' (9322), which
+    keeps them away from other tools on 9222. New folders are in %USERPROFILE%/.total_battle_counter_profiles,
+    so each account needs one login by hand.
+  - A window is only used or closed after its command line shows it is on the account's folder.
+  - A folder that never logged in stops only its account, without typing the password, and 'Open window' is
+    where the person logs in. A session that drops later is logged back into as before.
+  - Two active profiles on the same database are refused, when saving and when running.
+  - Removed 'Clear session between accounts', which would throw the verified session away.
+
+Next  - The OCR is gone, with RapidOCR and Tesseract and their settings. A new tournament type goes to the site's
+    Pending Tournaments with a picture of the Journal page, and its rankings wait for someone to name it
+    there (needs the site's version with this, and its migration).
+
+Next  - A new chest type is no longer read with the OCR. Its chests go to the site's review queue with a
+    picture of the panel, and naming one there names the type (needs the site's version with this).
+
+Next  - Profiles are switched over the network, inside the game's tab, so the tokens never reach Python.
+  - The game's list of profiles gives the target's token and id. A switch only counts when the page has
+    loaded and the game's requests carry that id, and a name that matches none or several is refused
+    (core/session.py). A run no longer needs the profile menu calibrated.
+  - The Journal's socket is looked for three times, since it may still be opening after a switch.
+  - Removed from the OCR what nothing calls: identify, read_text, read_rows_positioned, card_age_days.
+  - Removed the switch through the screen: the three calibration steps of the profile menu, find_text and
+    its name matching, the settings Delay after click, Profile switch wait and Name match threshold.
+
+Next  - The store is only watched for when something is about to be read or clicked on screen: before the
+    profile menu and before a reading of a panel. A run that stays on one profile and meets no new type
+    no longer waits the 15 s for it.
+
+Next  - The clan's members are asked over the network; the clan window is no longer opened.
+  - Route 15000 with record 58 gives the membership and route 402 the profiles, 100 at a time
+    (modules/members/module.py). The steps 'Clan: Members' and 'Clan: members list' and the settings for
+    the wait and the scrolling are gone.
+
+Next  - Which profile the game is on is asked over the network; the banner is no longer read.
+  - Every request of the game carries the id of the profile playing, and route 402 gives its name
+    (core/session.py). About 2 s, attaching included, against 3 s of OCR, and only the whole name counts, so 'Crash BR' cannot
+    pass for 'Cash BR'. The calibration step 'Active profile name' is gone.
+
+Next  - The tournament rankings are read over the network; the Journal is no longer walked by clicking.
+  - The list and each ranking are asked on the game's own Journal socket, without a click and without
+    marking any card as read (modules/events/feed.py, modules/events/mapper.py). 3199 entries, the whole
+    Journal since 22/11/2024, took 36 s. The players' names are asked for by id (route 402).
+  - Which cards are the clan's comes from the list: a classic result carries 1 for the clan's ranking and
+    0 for the player's own world ranking (up to 1.6 MB), which is not asked for.
+  - The game does not send a tournament's name. A type the site's catalogue does not know waits until
+    the end; then the Journal is paged to its first card and the page read. A page that disagrees with
+    the list is refused, and those rankings wait for the next search (modules/events/screen.py).
+  - Removed: 'Reload the game before searching', its wait, restarting Chrome before the rankings
+    (execution.fresh_browser_for_rankings), and the calibration of the steps that opened a card
+    (open card, Show details, ranking list, close ranking, close card). The Journal's calibration is
+    no longer required to run: without it, known tournaments are read and new ones wait.
+
+Next  - The clan chests are collected over the network; the screen is no longer involved.
+  - The game's list and the opening of each gift are requests sent from inside the game's tab, with the
+    session learned from the game's own requests, kept in memory and never logged or saved. Nothing is
+    clicked, captured or read for the chests (modules/chests/game_link.py, modules/chests/from_game.py).
+  - One request at a time, each waiting for its answer, at least 'Time between chests' apart (0.2 s). The
+    game answers in about 0.27 s, so 3 to 4 gifts per second.
+  - A player the site does not know is named by the game. A type is named by game_chest_types or by the
+    chests already written with it, when they all agree.
+  - A type nothing names waits until the known chests are done. Then the panel is opened, scrolled to the
+    first of them and read; the type is registered and collected over the network, and so on for the
+    next one. A reading that does not match the list leaves the chests for the next run, unless they are
+    about to expire (modules/chests/screen.py).
+  - Removed: the 'Test chest capture' button, the chest click delay and known-names settings,
+    database/vocabulary.py and tools/chest_traffic.py. A database too old for the game's ids now fails
+    with a message; it used to read the screen.
+
+Next  - One run at a time, and a reused Chrome is checked for the flags that keep it drawing.
+  - On 19/10 the scheduled run started at 18:51 while a module run from the interface was still in the
+    Journal. Both drove the same Chrome, the newcomer reset the game under the other, and every profile
+    failed after that. A run now holds config/run.lock (an OS lock, dropped when the process ends,
+    however it ends); one that finds it held logs a warning and does not start (exit code 0)
+    (utils/run_lock.py, core/runner.py, main.py).
+  - From 17/10 the Journal's "Show details" was almost never found (similarity stuck at 0.46): the
+    ranking did not arrive, closing the card closed the whole Journal and the profile failed. It worked
+    again on other runs with nothing in the collector changed. The suspect is Chrome throttling an
+    unseen window: the collector had been reusing a Chrome it had not opened, so the anti-throttling
+    flags were never checked. A reused Chrome whose command line lacks any of them is now restarted with
+    them (core/browser.py).
+  - When "Show details" is not recognised, the log says whether Chrome thinks the page is visible and
+    focused, and the screen is saved once per run as <time>_events_show_details_not_found.png. The
+    failure screenshot came after the Journal was closed and showed only the city (modules/events/mapper.py).
+  - A run with the tournament rankings due starts by closing the browser and opening a fresh one, so the
+    Journal is read on a freshly loaded game rather than on a Chrome left open for hours. Those runs
+    happen a few times a day; chest-only runs keep reusing the open browser. New setting in Execution:
+    'Restart browser before tournament rankings' (on by default) (core/runner.py, modules/base_module.py).
+
 Next  - A run starts with the profile the game opened on.
   - The game always comes up on the profile used last. The run followed the configured order all the
     same: opened on the second profile, it switched to the first and later back to the second - two

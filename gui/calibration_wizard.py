@@ -173,9 +173,6 @@ class CalibrationWizard(ctk.CTkToplevel):
         ctk.CTkButton(footer, text="🔎 Test this step", width=150, height=36,
                       fg_color="#1f6feb", hover_color="#388bfd",
                       command=self.test_step).pack(side="right", padx=4)
-        ctk.CTkButton(footer, text="🧰 Test chest capture", width=180, height=36,
-                      fg_color="#1f6feb", hover_color="#388bfd",
-                      command=self.test_chests).pack(side="right", padx=4)
         ctk.CTkButton(footer, text="📷 Refresh capture", width=160, height=36,
                       command=self.refresh_capture).pack(side="right", padx=4)
         ctk.CTkButton(footer, text="Skip", width=80, height=36, fg_color="#21262d",
@@ -481,10 +478,10 @@ class CalibrationWizard(ctk.CTkToplevel):
             self._set_state(note + "\n" + self.prompt, colour)
 
     def _post(self, message: str, colour: str, recapture: bool = False,
-              advance: bool = False, chests=None):
+              advance: bool = False):
         """A worker's result, for the main thread to apply."""
         self.results.put({"message": message, "colour": colour, "recapture": recapture,
-                          "advance": advance, "chests": chests})
+                          "advance": advance})
 
     # ------------------------------------------------------------- verifying
     def test_step(self):
@@ -514,8 +511,6 @@ class CalibrationWizard(ctk.CTkToplevel):
             self.busy = False
             if result.get("recapture"):
                 self.refresh_capture()
-            if result.get("chests") is not None:
-                ChestTestWindow(self, *result["chests"])
             if result.get("advance"):
                 self._go_next(result["message"], result["colour"])
             else:
@@ -549,29 +544,8 @@ class CalibrationWizard(ctk.CTkToplevel):
                 return
 
             if step.type == "area":
-                region = self.calibration.region(step.name)
-                backend = self.ctx.ocr.backend()
-                backend_name = backend.name
-                rows = self.ctx.ocr.read_rows(region)
-                from core.ocr import RapidOCRBackend
-                rapid_available, _ = RapidOCRBackend.available()
-                is_fallback = "tesseract" in backend_name.lower() and not rapid_available
-
-                if rows:
-                    sample = ' | '.join(rows[:6])
-                    if is_fallback:
-                        message = (
-                            f"⚠ Read [{backend_name} - FALLBACK]: {sample}\n"
-                            f"WARNING: RapidOCR unavailable! Tesseract has low accuracy for profile columns and names. Run install.bat to install RapidOCR."
-                        )
-                        colour = WARN_COLOR
-                    else:
-                        message = f"✔ Read [{backend_name}]: {sample}"
-                        colour = OK_COLOR
-                else:
-                    message = (f"✖ No text read in this area using {backend_name}. Is the correct screen open? "
-                               "Does the area cover the full text?")
-                    colour = ERROR_COLOR
+                message = "✔ Area marked. Check on the capture that it covers what the step asks for."
+                colour = OK_COLOR
             else:   # region: search reference image across whole page
                 match = self.ctx.vision.find(self.calibration.ref_path(step.name), None,
                                              base_scale=self.calibration.image_scale, attempts=1)
@@ -587,83 +561,6 @@ class CalibrationWizard(ctk.CTkToplevel):
             message, colour = f"✖ Test failed: {exc}", ERROR_COLOR
 
         self._post(message, colour, recapture)
-
-    # --------------------------------------------------- the chest panel test
-    def test_chests(self):
-        """
-        Asks the calibration the question the run asks: which chests do you see?
-
-        The three chest steps only make sense together - the 'Open' button is
-        found by its picture, and each chest's text is placed relative to the
-        button found for it - so testing them one at a time proves nothing about
-        the panel. Here the real detection runs against the live screen and its
-        answer is drawn: four boxes and four readings, or the reason there are
-        not.
-        """
-        if self.busy:
-            self._set_state("Wait: the game is already being driven.", WARN_COLOR)
-            return
-
-        missing = self.calibration.require("chest_area", "open_button_area", "open_button")
-        if missing:
-            titles = self.calibration.titles(missing)
-            self._set_state(f"Calibrate these steps first: {titles}.", WARN_COLOR)
-            return
-
-        self.busy = True
-        self._set_state("Looking for chests on the current screen and reading them...", MUTED)
-        self.update_idletasks()
-        threading.Thread(target=self._run_chest_test, daemon=True).start()
-
-    def _run_chest_test(self):
-        from modules.chests.collector import generation_time, split_row, visible_chests
-
-        try:
-            self.ctx.sync_viewport()
-            chests = visible_chests(self.calibration, self.ctx.vision, self.ctx.browser)
-            image = self.ctx.browser.capture(scale=1.0)
-
-            if not chests:
-                self._post(
-                    f"✖ No 'Open' button found on this screen (best similarity "
-                    f"{self.ctx.vision.last_score:.2f}). Open the gifts tab, or redo the "
-                    f"'Open button' step - the reference may have been cropped too loosely.",
-                    ERROR_COLOR, recapture=True)
-                return
-
-            # Read each chest's own area rather than the whole panel at once:
-            # the point here is which text belongs to which chest, and that is
-            # exactly what a per-chest read shows.
-            #
-            # And read it the way the run reads it, down to cutting off the
-            # panel's right-hand column: a test that showed the countdown and the
-            # 'Open' caption glued to the player and the source would be showing
-            # something the database never sees.
-            column_left = min((chest["button"][0] for chest in chests), default=None)
-            readings, countdowns = [], []
-            for chest in chests:
-                rows, minutes_left = [], None
-                for row in self.ctx.ocr.group_row_lines(self.ctx.ocr.read_lines(chest["text_area"])):
-                    text, minutes = split_row(row, column_left)
-                    if minutes is not None and minutes_left is None:
-                        minutes_left = minutes
-                    if text:
-                        rows.append(text)
-                readings.append(rows)
-                countdowns.append((minutes_left, generation_time(minutes_left)))
-
-            complete = sum(1 for rows in readings if len(rows) >= 3 and all(rows[:3]))
-            if complete == len(chests):
-                message = (f"✔ {len(chests)} chest(s) found and all read completely. "
-                           f"The panel normally shows four.")
-                colour = OK_COLOR
-            else:
-                message = (f"⚠ {len(chests)} chest(s) found, {complete} read completely. "
-                           f"Check the marked areas in the window that just opened.")
-                colour = WARN_COLOR
-            self._post(message, colour, chests=(image, chests, readings, countdowns))
-        except Exception as exc:  # noqa: BLE001
-            self._post(f"✖ Chest test failed: {exc}", ERROR_COLOR)
 
     def redo(self):
         step = self._current()
@@ -689,149 +586,3 @@ class CalibrationWizard(ctk.CTkToplevel):
         if self.on_done:
             self.on_done(self.calibration.complete)
         self.destroy()
-
-
-BUTTON_BOX = (90, 220, 80)      # BGR - where an 'Open' button was found
-TEXT_BOX = (255, 170, 60)       # BGR - where that chest's text will be read
-
-
-class ChestTestWindow(ctk.CTkToplevel):
-    """
-    What the collector sees in the chest panel, drawn and read back.
-
-    The three chest steps fail quietly: a slightly loose 'Open' reference finds
-    three buttons instead of four, and a text area a few pixels high cuts the
-    source line off - both of which look like an ordinary run until the numbers
-    are counted the next morning. Showing the boxes over the real screen, next
-    to the text read out of each one, makes that visible in the second it takes
-    to look.
-    """
-
-    def __init__(self, master, image, chests, readings, countdowns):
-        super().__init__(master)
-        self.title("Chest capture test")
-        self.geometry("1020x780")
-        self.minsize(760, 560)
-        self.transient(master)
-
-        complete = sum(1 for rows in readings if len(rows) >= 3 and all(rows[:3]))
-        headline = f"{len(chests)} chest(s) detected  ·  {complete} read completely"
-        colour = OK_COLOR if complete == len(chests) and chests else WARN_COLOR
-
-        ctk.CTkLabel(self, text=headline, font=ctk.CTkFont(size=16, weight="bold"),
-                     text_color=colour).pack(anchor="w", padx=16, pady=(14, 0))
-        ctk.CTkLabel(self,
-                     text="Green box: the 'Open' button that was found.   "
-                          "Blue box: the area whose text is saved for that chest.   "
-                          "The panel normally shows four chests.",
-                     font=ctk.CTkFont(size=11), text_color=MUTED,
-                     justify="left").pack(anchor="w", padx=16, pady=(2, 8))
-
-        self.preview = tk.Label(self, bg=CANVAS_BG, bd=0)
-        self.preview.pack(padx=16, pady=(0, 10))
-        self._render(image, chests)
-
-        ctk.CTkLabel(self, text="What was read in each chest area",
-                     font=ctk.CTkFont(size=13, weight="bold"), text_color=ACCENT
-                     ).pack(anchor="w", padx=16, pady=(0, 4))
-
-        listing = ctk.CTkScrollableFrame(self, fg_color=CANVAS_BG)
-        listing.pack(fill="both", expand=True, padx=16, pady=(0, 8))
-        for position, (chest, rows, countdown) in enumerate(zip(chests, readings, countdowns),
-                                                            start=1):
-            self._entry(listing, position, chest, rows, countdown)
-
-        ctk.CTkButton(self, text="Close", width=110, height=34, fg_color="#21262d",
-                      command=self.destroy).pack(pady=(0, 14))
-
-    def _render(self, image, chests):
-        """Draws the boxes over the capture, cropped to the panel so they are readable."""
-        if image is None or cv2 is None or getattr(image, "size", 0) == 0:
-            self.preview.configure(text="No capture to show", fg="#c9d1d9")
-            return
-
-        drawn = image.copy()
-        height, width = drawn.shape[:2]
-        boxes = []
-        for position, chest in enumerate(chests, start=1):
-            bx, by, bw, bh = chest["button"]
-            tx, ty, tw, th = chest["text_area"]
-            cv2.rectangle(drawn, (tx, ty), (tx + tw, ty + th), TEXT_BOX, 2)
-            cv2.rectangle(drawn, (bx, by), (bx + bw, by + bh), BUTTON_BOX, 2)
-            cv2.putText(drawn, str(position), (max(0, tx + 6), max(14, ty + 22)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, TEXT_BOX, 2, cv2.LINE_AA)
-            boxes.append((tx, ty, tx + tw, ty + th))
-            boxes.append((bx, by, bx + bw, by + bh))
-
-        if boxes:
-            margin = 40
-            left = max(0, min(b[0] for b in boxes) - margin)
-            top = max(0, min(b[1] for b in boxes) - margin)
-            right = min(width, max(b[2] for b in boxes) + margin)
-            bottom = min(height, max(b[3] for b in boxes) + margin)
-            if right - left > 20 and bottom - top > 20:
-                drawn = drawn[top:bottom, left:right]
-
-        shown = Image.fromarray(cv2.cvtColor(drawn, cv2.COLOR_BGR2RGB))
-        scale = min(960 / shown.width, 380 / shown.height, 1.0)
-        if scale < 1.0:
-            shown = shown.resize((max(1, int(shown.width * scale)),
-                                  max(1, int(shown.height * scale))), Image.LANCZOS)
-        self._photo = ImageTk.PhotoImage(shown)
-        self.preview.configure(image=self._photo)
-
-    @staticmethod
-    def _entry(parent, position: int, chest, rows, countdown=(None, None)):
-        from utils.text_utils import parse_key_value_line
-
-        name = rows[0].strip() if len(rows) >= 1 else ""
-        player = parse_key_value_line(rows[1])[1] if len(rows) >= 2 else ""
-        source = parse_key_value_line(rows[2])[1] if len(rows) >= 3 else ""
-        ok = bool(name and player and source)
-
-        card = ctk.CTkFrame(parent, fg_color=PANEL_BG, corner_radius=6)
-        card.pack(fill="x", pady=3, padx=2)
-
-        button = chest["button"]
-        ctk.CTkLabel(card,
-                     text=f"{'✔' if ok else '✖'} Chest {position}   ·   button at "
-                          f"({button[0]}, {button[1]})",
-                     font=ctk.CTkFont(size=12, weight="bold"),
-                     text_color=OK_COLOR if ok else ERROR_COLOR).pack(anchor="w", padx=12, pady=(8, 2))
-
-        if not rows:
-            ctk.CTkLabel(card, text="nothing read in this area — it is probably in the wrong "
-                                    "place, or too small",
-                         font=ctk.CTkFont(size=12), text_color=ERROR_COLOR,
-                         justify="left").pack(anchor="w", padx=24, pady=(0, 8))
-            return
-
-        values = ctk.CTkFrame(card, fg_color="transparent")
-        values.pack(anchor="w", padx=24, pady=(0, 8 if ok else 0))
-        for label, value in (("Chest", name), ("Player", player), ("Source", source)):
-            ctk.CTkLabel(values, text=f"{label}: {value or '— missing —'}",
-                         font=ctk.CTkFont(size=12),
-                         text_color="#c9d1d9" if value else WARN_COLOR).pack(side="left", padx=(0, 18))
-
-        # The countdown is not stored as text, but it is what dates the row, so
-        # a calibration that cannot read it is as broken as one that cannot read
-        # the player - and nothing else would say so.
-        minutes_left, generated_at = countdown
-        if minutes_left is None:
-            ctk.CTkLabel(card, text="Countdown: not read — this chest would be dated on arrival "
-                                    "instead of when the game made it",
-                         font=ctk.CTkFont(size=12), text_color=WARN_COLOR,
-                         justify="left").pack(anchor="w", padx=24, pady=(0, 6))
-        else:
-            ctk.CTkLabel(card,
-                         text=f"Countdown: {minutes_left // 60}h{minutes_left % 60:02d} left  ·  "
-                              f"generated {generated_at:%d/%m %H:%M}  ·  saved as collected_at",
-                         font=ctk.CTkFont(size=12), text_color=MUTED,
-                         justify="left").pack(anchor="w", padx=24, pady=(0, 6))
-
-        # The raw rows only matter when something is wrong with them: they are
-        # what shows whether a line was cut in half or landed in the wrong chest.
-        if not ok:
-            ctk.CTkLabel(card, text="read: " + " | ".join(rows),
-                         font=ctk.CTkFont(size=11), text_color=MUTED,
-                         wraplength=900, justify="left").pack(anchor="w", padx=24, pady=(2, 8))

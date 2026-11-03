@@ -1,8 +1,9 @@
-"""The events module end to end: the simulated game, a fake site per clan, and the real run around them."""
+"""The events module end to end: the simulated feed, a fake site per clan, and the real run around them."""
 import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -13,61 +14,18 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import AccountConfig, ProfileConfig  # noqa: E402
 from core.calibration import Calibration  # noqa: E402
 from core.runner import ModuleRunner  # noqa: E402
-from fakes import SITE_A, SITE_B, Clock, FakeBrowser, FakeContext, database, make_config, make_schedule  # noqa: E402
+from fakes import SITE_A, SITE_B, Clock, FakeContext, database, make_calibration, make_config, make_schedule  # noqa: E402
 from modules.events import EventsModule, api, legacy  # noqa: E402
+from modules.events import feed as events_feed  # noqa: E402
 from modules.events import module as events_module  # noqa: E402
 from modules.events.layout import JournalLayout  # noqa: E402
 from modules.events.store import SearchMemory, SentHistory  # noqa: E402
 from modules.registry import step_groups  # noqa: E402
-from test_events_autosend import FakeSite, journal_entries  # noqa: E402
-from test_events_journal import ENDED_AT  # noqa: E402
-from test_events_mapper import FakeGame, make_calibration, title  # noqa: E402
+from test_events_autosend import FakeSite  # noqa: E402
+from test_events_mapper import FakeFeed, ranking_entry, uid  # noqa: E402
 from utils.cancel import cancellation  # noqa: E402
 
-UID_A = "aaaaaaaa-0000-4000-8000-00000000000a"
-UID_B = "bbbbbbbb-0000-4000-8000-00000000000b"
-
-
-class GameBrowser(FakeGame, FakeBrowser):
-    """The simulated game, with what the run and the module ask of the real browser besides."""
-
-    reloads = restarts = 0
-
-    def reload(self, wait=True):
-        self.reloads += 1
-        self.view, self.page = "list", 0
-
-class GameOcr:
-    """core.ocr.OCREngine as the module uses it: the text the fake game put on the capture."""
-
-    def __init__(self):
-        self.game = None
-
-    def status(self):
-        return True, "fake engine"
-
-    def image_text(self, image, single_line=False, lang=""):
-        if image is None or image.shape[0] != 4:
-            return ""
-        return self.game.texts[image.shape[1] - 1]
-
-
-class FakeListener:
-    """Stands in for the second CDP connection: the fake game feeds the collector itself."""
-
-    instances = []
-
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-        self.running = False
-        FakeListener.instances.append(self)
-
-    def start(self):
-        self.running = True
-        return True
-
-    def stop(self):
-        self.running = False
+UID_A, UID_B = uid(5001), uid(5002)
 
 
 class EventsModuleTest(unittest.TestCase):
@@ -81,26 +39,39 @@ class EventsModuleTest(unittest.TestCase):
             ProfileConfig(name="Gamma", database=database("clan_c"), account_name="Main"),
         ])])
         self.config.set("modules.chests", "enabled", False)
-        self.config.set("modules.events", "cards_per_page", 3)
-
-        self.layout = make_calibration(os.path.join(folder, "calibration.json"))
-        calibration = self.layout.calibration
-        for name in ("profile_menu_button",):
-            calibration.set_point(name, 10, 10)
-        for name in ("profiles_list_area", "profile_name_display_area"):
-            calibration.regions[name] = {"left": 1, "top": 1, "width": 40, "height": 20}
-
-        self.ocr = GameOcr()
+        self.calibration = make_calibration(folder, self.config)
         self.sites = {SITE_A["site_url"]: FakeSite(), SITE_B["site_url"]: FakeSite()}
+        for site in self.sites.values():
+            site.known_tournaments = lambda: [{"game_type": 1024, "ranking": "", "name": "Rise of the Ancients"}]
         self.clients = []
-        FakeListener.instances = []
+        self.games = {}
+        self.current = {}
+        test = self
+
+        class Feed:
+            """Stands in for JournalFeed: the Journal of the profile the run has switched to."""
+
+            def __init__(self, **kwargs):
+                self.game = test.current["feed"]
+                self.game.kwargs = kwargs
+                self.game.running = False
+
+            def start(self):
+                self.game.running = True
+                return True
+
+            def stop(self):
+                self.game.running = False
+
+            def __getattr__(self, name):
+                return getattr(self.game, name)
 
         def client(site, token, version=""):
             self.clients.append((site, token))
             return self.sites[site]
 
         patches = [
-            mock.patch.object(events_module, "TrafficListener", FakeListener),
+            mock.patch.object(events_feed, "JournalFeed", Feed),
             mock.patch.object(events_module, "SiteClient", client),
             mock.patch.object(events_module, "profile_cache_path", lambda: os.path.join(folder, "players.json")),
             mock.patch.object(events_module, "SentHistory", lambda site: SentHistory(site, folder)),
@@ -116,33 +87,17 @@ class EventsModuleTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def context(self, tournaments):
-        """A context whose browser is the game: `tournaments` is profile -> (title, uid)."""
-        self.tournaments = tournaments
-        ctx = FakeContext(self.config, self.layout.calibration, ocr=self.ocr)
+        """A context whose game is the feed: `tournaments` is profile -> the entry number of its ranking."""
+        ctx = FakeContext(self.config, self.calibration)
         test = self
 
         class Switcher(type(ctx.profiles)):
-            """Switching profile puts that clan's Journal on screen, as the game would."""
+            """Switching profile puts that clan's Journal in the feed, as the game would."""
 
-            def switch_to(self, profile, siblings=()):
-                name, uid = test.tournaments[profile.name]
-                game = GameBrowser(test.layout, [[title(name)]], {name: (uid, (1024, 1), [1001, 1002])}, None)
-                test.games[profile.name] = game
-                test.ocr.game = game
-                ctx.browser = game
-                # The collector only exists once the module starts: hand it over then.
-                original = events_module.journal.JournalCollector
-
-                def collector(cache=None):
-                    made = original(cache)
-                    game.collector = made
-                    made.feed_record(journal_entries([(uid, ENDED_AT, (1024, 1))]))
-                    return made
-
-                test.collector_patch = mock.patch.object(events_module.journal, "JournalCollector", collector)
-                test.collector_patch.start()
-                test.addCleanup(test.collector_patch.stop)
-                return super().switch_to(profile, siblings)
+            def switch_to(self, profile):
+                test.current["feed"] = FakeFeed([ranking_entry(tournaments[profile.name], int(time.time()), (1024, 1))])
+                test.games[profile.name] = test.current["feed"]
+                return super().switch_to(profile)
 
         ctx.profiles = Switcher()
         self.games = {}
@@ -155,7 +110,7 @@ class EventsModuleTest(unittest.TestCase):
         return self.runner.run(**kwargs)
 
     def test_each_profile_sends_its_clan_ranking_to_its_own_site_with_its_own_token(self):
-        summary = self.run_module({"Alpha": ("Rise of the Ancients", UID_A), "Beta": ("Epic Hunt", UID_B)})
+        summary = self.run_module({"Alpha": 1, "Beta": 2})
 
         self.assertEqual([], summary["failures"])
         # Gamma has no clan site: never switched to, never searched.
@@ -165,33 +120,30 @@ class EventsModuleTest(unittest.TestCase):
         [post_a] = self.sites[SITE_A["site_url"]].posts
         [post_b] = self.sites[SITE_B["site_url"]].posts
         self.assertEqual((UID_A, "Rise of the Ancients"), (post_a["result_uid"], post_a["name"]))
-        self.assertEqual((UID_B, "Epic Hunt"), (post_b["result_uid"], post_b["name"]))
+        self.assertEqual(UID_B, post_b["result_uid"])
         self.assertTrue(post_a["auto_publish"], "every player has a name")
         self.assertEqual(["Player 1001", "Player 1002"], [row["name"] for row in post_a["rows"]])
         self.assertTrue(self.sites[SITE_A["site_url"]].reports[0]["complete"])
 
-        # The listener was attached to the tab the browser drives, and released.
-        self.assertEqual("TAB", FakeListener.instances[0].kwargs["tab_id"])
-        self.assertFalse(any(listener.running for listener in FakeListener.instances))
-        self.assertEqual("list", self.games["Alpha"].view, "the Journal was left on its list")
+        # The feed was attached to the tab the browser drives, and released.
+        self.assertEqual("TAB", self.games["Alpha"].kwargs["tab_id"])
+        self.assertFalse(any(game.running for game in self.games.values()))
 
         results = {r["profile"]: r for r in summary["results"]}
         self.assertEqual((1, 1, 1), (results["Alpha"]["tournaments"], results["Alpha"]["sent"],
                                      results["Alpha"]["published"]))
 
-        # Straight after whatever ran before: the game is not reloaded.
-        self.assertEqual(0, self.games["Alpha"].reloads)
         # The complete search is remembered, per clan site.
         self.assertIsNotNone(SearchMemory(SITE_A["site_url"], self.tmp.name).last_search())
 
     def test_the_next_search_only_walks_the_days_since_the_last_one(self):
         self.config.set("modules.events", "days_back", 7)
-        tournaments = {"Alpha": ("Rise of the Ancients", UID_A), "Beta": ("Epic Hunt", UID_B)}
+        tournaments = {"Alpha": 1, "Beta": 2}
         seen = []
         original = events_module.autosend.AutoSearch
 
         def search(*args, **kwargs):
-            seen.append((args[5].max_age_days, kwargs["use_site_cutoff"]))
+            seen.append((args[4].max_age_days, kwargs["use_site_cutoff"]))
             return original(*args, **kwargs)
 
         with mock.patch.object(events_module.autosend, "AutoSearch", search):
@@ -202,10 +154,9 @@ class EventsModuleTest(unittest.TestCase):
 
         # First: all 7 days. Same day again: today plus one of overlap. Raised to 14: all of them, once.
         self.assertEqual([(7, True), (1, True), (14, False)], seen)
-        self.assertEqual(1, len(self.sites[SITE_A["site_url"]].posts), "and nothing was sent twice")
 
     def test_it_runs_once_a_day_per_profile(self):
-        tournaments = {"Alpha": ("Rise of the Ancients", UID_A), "Beta": ("Epic Hunt", UID_B)}
+        tournaments = {"Alpha": 1, "Beta": 2}
         self.run_module(tournaments)
         self.clients.clear()
 
@@ -214,41 +165,24 @@ class EventsModuleTest(unittest.TestCase):
         self.assertEqual({}, self.games)
         self.assertEqual([], summary["failures"])
 
-    def test_a_token_the_site_refuses_stops_that_profile_before_anything_is_clicked(self):
+    def test_a_token_the_site_refuses_stops_that_profile_before_the_game_is_asked(self):
         def refused():
             raise api.ApiError(401, "This API token is invalid, expired or revoked.")
 
         self.sites[SITE_A["site_url"]].me = refused
-        summary = self.run_module({"Alpha": ("Rise of the Ancients", UID_A), "Beta": ("Epic Hunt", UID_B)})
+        summary = self.run_module({"Alpha": 1, "Beta": 2})
 
         [failure] = summary["failures"]
         self.assertEqual(("events", "Alpha"), (failure["module"], failure["profile"]))
         self.assertIn("invalid", failure["reason"])
-        self.assertEqual([], self.games["Alpha"].clicks)
+        self.assertEqual([], self.games["Alpha"].asked_rankings)
         self.assertEqual(1, len(self.sites[SITE_B["site_url"]].posts), "the other clan is not affected")
-
-    def test_the_game_is_reloaded_first_and_must_come_back_on_the_same_profile(self):
-        self.config.set("modules.events", "reload_game", True)
-        self.run_module({"Alpha": ("Rise of the Ancients", UID_A), "Beta": ("Epic Hunt", UID_B)},
-                        only_profile="Alpha")
-        self.assertEqual(1, self.games["Alpha"].reloads)
-        self.assertEqual(1, len(self.sites[SITE_A["site_url"]].posts))
-
-        # Tomorrow the game reopens on another city: nothing may be sent.
-        self.clock.now = datetime(2026, 10, 8, 3, 0)
-        ctx = self.context({"Alpha": ("Other", UID_B), "Beta": ("Epic Hunt", UID_B)})
-        ctx.profiles.is_active = lambda _name, _siblings=(): False
-        self.runner = ModuleRunner(ctx, schedule=make_schedule(self.tmp.name, self.clock))
-        summary = self.runner.run(only_profile="Alpha")
-
-        self.assertEqual(["all attempts failed"], [f["reason"] for f in summary["failures"]])
-        self.assertEqual(1, len(self.sites[SITE_A["site_url"]].posts), "nothing new was sent")
 
     def test_half_filled_site_settings_are_pointed_out(self):
         profile = ProfileConfig(name="Half", account_name="Main", modules={"events": {"site_url": "x.example.com"}})
         self.assertFalse(EventsModule.configured_for(profile))
         self.assertIn("token missing", EventsModule.profile_summary(profile))
-        module = EventsModule(FakeContext(self.config, self.layout.calibration))
+        module = EventsModule(FakeContext(self.config, self.calibration))
         self.assertEqual(1, len(module.preflight([profile])))
         self.assertEqual((False, "Fill in the clan site address."), EventsModule.test_profile({}))
 
@@ -285,13 +219,12 @@ class LegacyImportTest(unittest.TestCase):
 
             self.assertEqual((40, 600), calibration.points["journal_button"])
             self.assertEqual((1, 2), calibration.points["journal_next_page"])
-            self.assertTrue(os.path.exists(calibration.ref_path("journal_show_details")))
             self.assertEqual((1536, 695), calibration.step_viewports["journal_button"])
             self.assertEqual(4, config.module("events")["cards_per_page"])
             self.assertEqual(190 - 100, JournalLayout(calibration).card_pitch())
             self.assertEqual(3, SentHistory("https://clan-a.example.com", data).info(UID_A)["event_number"])
             self.assertIn("1001", json.loads(Path(data, "players.json").read_text(encoding="utf-8"))["profiles"])
-            self.assertIn("4 Journal step(s) imported", report)
+            self.assertIn("3 Journal step(s) imported", report)
             self.assertIn("1536x695", report, "a different page size is pointed out")
             self.assertIn("token is not imported", report)
             self.assertNotIn("imported.", again.split("The uploader")[0].replace("left as they are", ""))

@@ -222,9 +222,8 @@ class Vision:
         """
         Every place the reference appears, top to bottom.
 
-        One capture answers for the whole list, which is the point: the chest
-        panel shows four 'Open' buttons at once, and finding them together lets
-        four chests be read in a single OCR pass instead of four.
+        One capture answers for the whole list: the chest panel shows four
+        'Open' buttons at once.
 
         Matches closer together than `min_distance` vertically are the same
         button seen twice - template matching peaks over several neighbouring

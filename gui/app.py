@@ -347,7 +347,7 @@ class ProfileRow(ctk.CTkFrame):
 class AccountCard(ctk.CTkFrame):
     """An account and the profiles reached through it."""
 
-    def __init__(self, master, account: AccountConfig, on_remove):
+    def __init__(self, master, account: AccountConfig, on_remove, on_open_window):
         super().__init__(master, fg_color=CARD_BG, corner_radius=8)
         self.account = account
         self.on_remove = on_remove
@@ -393,14 +393,19 @@ class AccountCard(ctk.CTkFrame):
 
         second = ctk.CTkFrame(self, fg_color="transparent")
         second.pack(fill="x", padx=12, pady=(6, 0))
-        self.browser_profile = labelled_entry(second, "Browser profile", 160,
-                                              placeholder_text="empty = default profile")
+        self.browser_profile = labelled_entry(second, "Chrome folder", 330,
+                                              placeholder_text="empty = chosen when saved")
         self.browser_profile.insert(0, account.browser_profile)
-        ctk.CTkLabel(second,
-                     text="Only needed for multiple accounts: each keeps its own session in a folder, "
-                          "avoiding email verification codes.",
+        self.cdp_port = labelled_entry(second, "Debugging port", 90, placeholder_text="auto")
+        self.cdp_port.insert(0, str(account.cdp_port or ""))
+        ctk.CTkButton(second, text="Open window", width=0, fg_color="#21262d",
+                      command=lambda: on_open_window(self)).pack(side="left", padx=6, pady=(17, 0))
+        ctk.CTkLabel(self,
+                     text="This account's own Chrome window. The folder keeps the session the game verified: the "
+                          "first login is by hand (Open window, then the code from the e-mail). Change the folder "
+                          "or the port only if they clash with something else; a new folder asks for a new code.",
                      font=ctk.CTkFont(size=11), text_color=MUTED,
-                     wraplength=480, justify="left").pack(side="left", padx=10, pady=(17, 0))
+                     wraplength=800, justify="left").pack(anchor="w", padx=18, pady=(4, 0))
 
         ctk.CTkLabel(self, text="Profiles (cities) for this account, collected in this order:",
                      font=ctk.CTkFont(size=11), text_color=MUTED).pack(anchor="w", padx=14, pady=(10, 2))
@@ -424,6 +429,22 @@ class AccountCard(ctk.CTkFrame):
                       command=lambda: self._add_row(ProfileConfig(account_name=account.name))
                       ).pack(anchor="w", padx=14, pady=(0, 12))
 
+    def port_typed(self) -> int:
+        """The port typed, 0 when left empty. Raises ValueError on anything that cannot be a port."""
+        text = self.cdp_port.get().strip()
+        if not text:
+            return 0
+        port = int(text)
+        if not 1024 <= port <= 65535:
+            raise ValueError(text)
+        return port
+
+    def show_window(self, account: AccountConfig):
+        """The folder and port the account ended up with."""
+        for entry, value in ((self.browser_profile, account.browser_profile), (self.cdp_port, account.cdp_port)):
+            entry.delete(0, "end")
+            entry.insert(0, str(value))
+
     def _toggle_password(self):
         self.password.configure(show="" if self.password.cget("show") else "*")
 
@@ -444,6 +465,7 @@ class AccountCard(ctk.CTkFrame):
             password=self.password.get(),
             enabled=bool(self.enabled.get()),
             browser_profile=self.browser_profile.get().strip(),
+            cdp_port=self.port_typed(),
             profiles=[row.to_profile(name) for row in self.rows if row.name.get().strip()],
         )
 
@@ -671,11 +693,12 @@ class App(ctk.CTk):
         self.accounts_box = ctk.CTkScrollableFrame(parent, fg_color="transparent")
         self.accounts_box.pack(fill="both", expand=True, padx=8, pady=(0, 10))
 
+        self.config_manager.pin_windows()
         for account in self.config_manager.accounts:
             self._add_card(account)
 
     def _add_card(self, account: AccountConfig):
-        card = AccountCard(self.accounts_box, account, self._remove_card)
+        card = AccountCard(self.accounts_box, account, self._remove_card, self.open_account_window)
         card.pack(fill="x", pady=6)
         self.cards.append(card)
 
@@ -704,12 +727,30 @@ class App(ctk.CTk):
         messagebox.showinfo("Configuration", "Modules and parameters saved to config/config.json.")
 
     def save_accounts(self):
-        accounts = [card.to_account() for card in self.cards if card.name.get().strip()]
+        cards = [card for card in self.cards if card.name.get().strip()]
+        try:
+            accounts = [card.to_account() for card in cards]
+        except ValueError as exc:
+            messagebox.showerror("Accounts and profiles",
+                                 f"'{exc}' is not a debugging port. Use a number from 1024 to 65535, "
+                                 "or leave it empty to get a free one.")
+            return
+        problems = self.config_manager.window_problems(accounts) + self.config_manager.database_problems(accounts)
+        if problems:
+            messagebox.showerror("Accounts and profiles", "Not saved:\n\n" + "\n\n".join(problems))
+            return
         without_database = [
             f"{a.name}/{p.name}" for a in accounts for p in a.profiles if not p.has_database
         ]
         self.config_manager.accounts = accounts
         self.config_manager.save()
+        self.config_manager.pin_windows()
+        for card, account in zip(cards, self.config_manager.accounts):
+            card.show_window(account)
+        # What was connected may no longer be any account's window.
+        if self.context is not None and not (self.worker and self.worker.is_alive()):
+            self.context.browser.disconnect()
+            self.context = None
         self._refresh_status()
 
         message = f"{len(accounts)} account(s) saved to config/config.json."
@@ -746,6 +787,26 @@ class App(ctk.CTk):
                 elif widget is not None:
                     widget.delete(0, "end")
                     widget.insert(0, "" if value is None else str(value))
+
+    def open_account_window(self, card: AccountCard):
+        """Opens an account's Chrome window and leaves it there, for the login only a person can do."""
+        from core.context import browser_for
+
+        name = card.name.get().strip()
+        account = next((a for a in self.config_manager.accounts if a.name == name), None)
+        if account is None or not account.cdp_port:
+            messagebox.showinfo("Open window", "Save the accounts first: the window opens with what is saved.")
+            return
+
+        def work():
+            try:
+                browser_for(self.config_manager, account).open_for_person()
+                logger.info(f"Window of '{name}' open on port {account.cdp_port}. Log in there and type the code "
+                            f"from the e-mail, if asked; the next run uses that session.")
+            except Exception as exc:  # noqa: BLE001
+                logger.error(f"Could not open the window of '{name}': {exc}")
+
+        self._run_in_background(work)
 
     def _ensure_context(self, connect: bool = True):
         from core.context import build_context
@@ -901,26 +962,12 @@ class App(ctk.CTk):
             color = OK_COLOR
         self.lbl_status.configure(text=calibration_text, text_color=color)
 
-        engine = "not verified"
-        if self.context is not None:
-            ok, reason = self.context.ocr.status()
-            engine = reason if ok else f"unavailable ({reason})"
-        else:
-            try:
-                from core.ocr import RapidOCRBackend
-
-                available, reason = RapidOCRBackend.available()
-                engine = reason if available else f"RapidOCR unavailable — {reason}"
-            except Exception:
-                pass
-
         self.lbl_info.configure(text=(
             f"Registered accounts: {len(accounts)}   ·   profiles: {len(profiles)} "
             f"({len(collectable)} with configured database)\n"
             f"Modules: {modules_text}\n"
             f"Calibration: {calibration_text}   ·   calibrated viewport: "
             f"{self.calibration.viewport[0]}x{self.calibration.viewport[1]}\n"
-            f"OCR: {engine}\n"
             f"Configuration: {self.config_manager.path}"
         ))
 

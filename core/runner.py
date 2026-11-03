@@ -2,10 +2,12 @@
 The run itself: accounts in order, inside each one its profiles, and on each
 profile the modules that are due.
 
-This is the order the whole redesign was for. An account is opened by logging
-in, its profiles are visited one after another, and only then is the session
-ended and the next account opened. Nothing here assumes a session left behind by
-a previous run.
+This is the order the whole redesign was for. An account is opened in its own
+Chrome window, its profiles are visited one after another, and accounts work at
+the same time, up to `execution.parallel_accounts`: each has its own window and its
+own services (RunContext.for_account), and nothing here assumes a session left
+behind by a previous run. The profiles of one account can never overlap: they share
+a login, and the game drops the older session of a profile that opens twice.
 
 What is done on a profile is not decided here: each enabled module
 (modules/registry.py) is asked whether the profile has what it needs, the
@@ -23,18 +25,21 @@ run halt. A module that cannot work at all (its screens were never calibrated,
 say) is left out of the run and reported, and the others go on without it.
 """
 
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from config.settings import AccountConfig, ProfileConfig
+from config.settings import RUN_LOCK_PATH, AccountConfig, ProfileConfig
 from modules.base_module import BaseModule
 from modules.registry import MODULES, MODULES_BY_KEY, enabled_modules
 from utils.cancel import Cancelled, cancellation
-from utils.logger import logger, screenshot_dir
+from utils.logger import log_as, logger, screenshot_dir
+from utils.run_lock import RunLock
 
-from .calibration import SHARED_REQUIRED_STEPS
+from .browser import WrongWindow
 from .schedule import SCHEDULE_EVERY_RUN, ModuleSchedule
-from .session import SessionError
+from .session import NeedsPerson, SessionError
 
 # (account, profile) -> the modules to run there, in order.
 Plan = Dict[Tuple[str, str], List[BaseModule]]
@@ -42,6 +47,10 @@ Plan = Dict[Tuple[str, str], List[BaseModule]]
 
 class RunnerError(RuntimeError):
     pass
+
+
+class RunAlreadyActive(RunnerError):
+    """Another run (the scheduler's or the interface's) is driving the browser right now."""
 
 
 def final_results(results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -62,14 +71,17 @@ class ModuleRunner:
     """Drives a full run across every enabled account, profile and module."""
 
     def __init__(self, context, modules: Optional[Sequence[BaseModule]] = None,
-                 schedule: Optional[ModuleSchedule] = None):
+                 schedule: Optional[ModuleSchedule] = None, lock_path: str = RUN_LOCK_PATH):
         self.ctx = context
+        self.lock = RunLock(lock_path)
         self.execution = context.config.section("execution")
         self.timing = context.config.section("timing")
         self.modules: List[BaseModule] = (list(modules) if modules is not None
                                           else [module(context) for module in enabled_modules(context.config)])
         self.schedule = schedule or ModuleSchedule()
         self.results: List[Dict[str, Any]] = []
+        # 'Stop on first error' reaching the accounts working on the other threads.
+        self._halt = threading.Event()
 
     # -------------------------------------------------------------- selection
     def _selected_accounts(self, only_account: Optional[str]) -> List[AccountConfig]:
@@ -136,22 +148,10 @@ class ModuleRunner:
                     f"(a database for the chests, a clan site and token for the tournaments)."
                 )
 
-        # Sessions are no longer wiped between accounts (that costs an e-mail
-        # verification code), so two accounts sharing one browser profile would
-        # both run inside whichever session happens to be open - and the second
-        # account's chests would land in the first account's database.
-        if len(accounts) > 1 and not self.ctx.login.clear_between_accounts:
-            folders = [self.ctx.config.browser_profile_for(a) for a in accounts]
-            if len(set(folders)) < len(accounts):
-                problems.append(
-                    "Multiple accounts share the same browser profile. Since sessions are "
-                    "no longer cleared between accounts, the second account would use the first's session. "
-                    "Assign each account its own 'Browser profile' in Accounts and profiles."
-                )
-
-        missing = self.ctx.calibration.require(*SHARED_REQUIRED_STEPS)
-        if missing:
-            problems.append(f"Incomplete calibration. Missing steps: {self.ctx.calibration.titles(missing)}.")
+        # Asked of everything enabled, not only of what this run was restricted to:
+        # either of these is a mistake in the configuration, and the data is what it costs.
+        problems += self.ctx.config.window_problems()
+        problems += self.ctx.config.database_problems()
 
         # Works with or without the browser open: with it, against the live page
         # size; without it, against the size the calibration was recorded at.
@@ -162,20 +162,6 @@ class ModuleRunner:
                 f"{self.ctx.calibration.titles(outside)}. Redo them in the wizard, with the window "
                 f"at your normal running size."
             )
-
-        ocr_ok, ocr_reason = self.ctx.ocr.status()
-        if not ocr_ok:
-            problems.append(f"OCR unavailable: {ocr_reason}.")
-        else:
-            logger.info(f"OCR engine: {ocr_reason}")
-            from core.ocr import RapidOCRBackend
-            rapid_ok, _ = RapidOCRBackend.available()
-            if not rapid_ok:
-                logger.warning(
-                    "CRITICAL WARNING: RapidOCR is not available on this machine! "
-                    "Falling back to Tesseract. Tesseract frequently fails to read "
-                    "profile lists and foreign/accented player names. Run install.bat to install RapidOCR."
-                )
 
         return problems
 
@@ -236,9 +222,27 @@ class ModuleRunner:
 
         `only_modules` restricts the run to those module keys; `force` ignores
         the schedule, so a once-a-day module runs again.
+
+        Only one run at a time drives the browser (utils/run_lock.py): a run
+        that finds another one going raises RunAlreadyActive before touching
+        anything.
         """
+        if not self.lock.acquire():
+            holder = self.lock.holder()
+            raise RunAlreadyActive(
+                "Another run is already in progress" + (f" (process {holder})" if holder else "")
+                + "; this one was not started, so the two do not fight over the browser."
+            )
+        try:
+            return self._locked_run(only_account, only_profile, only_modules, force)
+        finally:
+            self.lock.release()
+
+    def _locked_run(self, only_account: Optional[str], only_profile: Optional[str],
+                    only_modules: Optional[Sequence[str]], force: bool) -> Dict[str, Any]:
         started = datetime.now()
         self.results = []
+        self._halt.clear()
         modules = self._selected_modules(only_modules)
         accounts = self._selected_accounts(only_account)
 
@@ -306,20 +310,50 @@ class ModuleRunner:
             logger.info("Nothing is due on this run: every module is either done for today or has no profile set up.")
             return self._summary(started)
 
-        self.ctx.start_browser()
-
         busy = [account for account in accounts
                 if any((account.name, profile.name) in plan for profile in account.active_profiles)]
-        for index, account in enumerate(busy, start=1):
-            cancellation.check()
-            logger.info("=" * 60)
-            logger.info(f"ACCOUNT {index}/{len(busy)}: '{account.name}'")
-            logger.info("=" * 60)
-            self._run_account_with_restart(account, only_profile, plan)
+        windows = [(account, self.ctx.for_account(account)) for account in busy]
+        workers = min(int(self.execution.get("parallel_accounts", 4)), len(windows))
+        if workers > 1:
+            self._run_at_once(windows, workers, only_profile, plan)
+        else:
+            for index, (account, context) in enumerate(windows, start=1):
+                cancellation.check()
+                logger.info("=" * 60)
+                logger.info(f"ACCOUNT {index}/{len(windows)}: '{account.name}'")
+                logger.info("=" * 60)
+                self._run_account_with_restart(account, context, only_profile, plan)
 
         return self._summary(started)
 
-    def _run_account_with_restart(self, account: AccountConfig, only_profile: Optional[str], plan: Plan):
+    def _run_at_once(self, windows: List[Tuple[AccountConfig, Any]], workers: int,
+                     only_profile: Optional[str], plan: Plan):
+        """The accounts on threads of their own. Raises, once they have all stopped, what would have ended the run."""
+        ended: List[Exception] = []
+
+        def work(account: AccountConfig, context):
+            if self._halt.is_set():
+                return
+            with log_as(account.name):
+                try:
+                    self._run_account_with_restart(account, context, only_profile, plan)
+                except Exception as exc:  # noqa: BLE001 - handed to the run's thread below
+                    ended.append(exc)
+                    self._halt.set()
+
+        logger.info(f"{len(windows)} account(s), {workers} at a time: "
+                    + ", ".join(f"{account.name} (port {context.browser.port})" for account, context in windows))
+        with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="account") as pool:
+            for account, context in windows:
+                pool.submit(work, account, context)
+
+        for failure in ended:
+            if isinstance(failure, Cancelled):
+                raise failure
+        if ended:
+            raise ended[0]
+
+    def _run_account_with_restart(self, account: AccountConfig, context, only_profile: Optional[str], plan: Plan):
         """
         Runs the account; if nothing at all could be done, restarts the
         browser and runs it once more.
@@ -334,13 +368,19 @@ class ModuleRunner:
         for attempt in range(1, attempts + 1):
             last = attempt == attempts
             try:
-                if self._run_account(account, only_profile, plan):
+                if self._run_account(account, context, only_profile, plan):
                     return
                 if last:
                     return       # each profile already recorded its own failure
                 reason = "nothing could be done on any profile of the account"
             except Cancelled:
                 raise
+            except (NeedsPerson, WrongWindow) as exc:
+                # Another attempt cannot help, and a restart could close somebody else's window.
+                self._record_failure(account, None, str(exc))
+                if self.execution.get("stop_on_error"):
+                    raise
+                return
             except SessionError as exc:
                 if last:
                     self._record_failure(account, None, str(exc))
@@ -350,7 +390,7 @@ class ModuleRunner:
                 reason = str(exc)
             except Exception as exc:  # noqa: BLE001 - one account must not sink the run
                 logger.exception(f"Unexpected failure on account '{account.name}': {exc}")
-                self._save_error_screenshot(f"account_{account.name}")
+                self._save_error_screenshot(context, f"account_{account.name}")
                 if last:
                     self._record_failure(account, None, f"unexpected error: {exc}")
                     if self.execution.get("stop_on_error"):
@@ -363,8 +403,8 @@ class ModuleRunner:
                 f"browser; closing it and trying the account again in a fresh one."
             )
             try:
-                self.ctx.browser.restart()
-                self.ctx.sync_viewport()
+                context.browser.restart()
+                context.sync_viewport()
             except Exception as exc:  # noqa: BLE001
                 logger.error(f"Could not restart the browser: {exc}")
                 self._record_failure(account, None, f"{reason}; browser restart failed: {exc}")
@@ -372,33 +412,28 @@ class ModuleRunner:
                     raise
                 return
 
-    def _run_account(self, account: AccountConfig, only_profile: Optional[str], plan: Plan) -> bool:
-        """Runs the account's profiles. False when none of those tried succeeded."""
-        # An account with a browser profile of its own gets the browser restarted
-        # on that folder, so it arrives at a session the game has already verified.
-        wanted_profile = self.ctx.config.browser_profile_for(account)
-        if not self.ctx.browser.switch_profile(wanted_profile):
-            raise SessionError(
-                f"Account '{account.name}' uses browser profile '{wanted_profile}', "
-                f"which could not be opened."
-            )
-        self.ctx.sync_viewport()
+    def _run_account(self, account: AccountConfig, context, only_profile: Optional[str], plan: Plan) -> bool:
+        """Runs the account's profiles in its window. False when none of those tried succeeded."""
+        cancellation.check()
+        context.start_browser()
 
-        if self.ctx.login.enabled:
-            if not self.ctx.login.enter_account(account):
+        if context.login.enabled:
+            if not context.login.enter_account(account):
                 raise SessionError(f"Could not log into account '{account.name}'.")
         else:
-            self.ctx.browser.navigate()
+            context.browser.navigate()
 
-        self.ctx.browser.wait_for_load()
-        self.ctx.game_state.prepare_board()
+        context.browser.wait_for_load()
+        if context.login.enabled:
+            context.login.remember_session()
 
-        # Every profile name of the account, so the switcher can tell near-twin
-        # names apart by competition instead of by threshold.
+        # Every profile name of the account, to recognise the one the game opened on.
         siblings = [p.name for p in account.profiles if p.name]
 
         tried = succeeded = 0
-        for profile in self._active_first(account, self._profiles_of(account, only_profile), siblings, plan):
+        for profile in self._active_first(context, account, self._profiles_of(account, only_profile), siblings, plan):
+            if self._halt.is_set():
+                break
             if not self._set_up(profile):
                 logger.warning(
                     f"Profile '{profile.label}' has no database and nothing else set up, and was skipped "
@@ -411,37 +446,34 @@ class ModuleRunner:
                 continue
             cancellation.check()
             tried += 1
-            if self._run_profile(account, profile, siblings, tasks):
+            if self._run_profile(context, account, profile, tasks):
                 succeeded += 1
             cancellation.sleep(float(self.timing.get("between_profiles_wait", 3.0)))
 
-        if self.ctx.login.enabled:
-            self.ctx.login.end_session()
         return succeeded > 0 or tried == 0
 
-    def _active_first(self, account: AccountConfig, profiles: List[ProfileConfig], siblings: List[str],
+    def _active_first(self, context, account: AccountConfig, profiles: List[ProfileConfig], siblings: List[str],
                       plan: Plan) -> List[ProfileConfig]:
         """
         The profiles in the order to visit them: the one the game opened on first.
 
         The game always comes up on some profile - the one used last. Followed
         in the configured order, a run that opened on the second profile switched
-        to the first, then back to the second: two trips through the profile menu
-        and two loading waits to end up where it started. So the banner is read
-        once, with the board already clear, and if it names a profile with
+        to the first, then back to the second: two switches
+        and two loading waits to end up where it started. So the game is asked
+        once, and if it names a profile with
         something due, that one is done before any switching. The rest keep
         their order.
 
-        The banner is identified against every profile of the account, so a
-        near-twin that is not due cannot pass for one that is. When it cannot be
-        read, the configured order stands - which is what the run always did.
+        The game says which profile it is on. When it cannot be asked, the
+        configured order stands - which is what the run always did.
         """
         try:
-            active = self.ctx.profiles.active_among(siblings)
+            active = context.profiles.active_among(siblings)
         except Cancelled:
             raise
         except Exception as exc:  # noqa: BLE001 - only the order depends on it
-            logger.warning(f"Could not read which profile the game opened on: {exc}")
+            logger.warning(f"Could not learn which profile the game opened on: {exc}")
             return profiles
 
         first = [p for p in profiles if p.name == active and plan.get((account.name, p.name))]
@@ -458,8 +490,7 @@ class ModuleRunner:
                     f"then the others in their order.")
         return first[:1] + [p for p in profiles if p is not first[0]]
 
-    def _run_profile(self, account: AccountConfig, profile: ProfileConfig, siblings: List[str],
-                     tasks: List[BaseModule]) -> bool:
+    def _run_profile(self, context, account: AccountConfig, profile: ProfileConfig, tasks: List[BaseModule]) -> bool:
         """Runs the profile's modules, retrying the ones that failed. True when any of them succeeded."""
         attempts = int(self.execution.get("retries_per_profile", 2))
         pending = list(tasks)
@@ -467,15 +498,12 @@ class ModuleRunner:
         for attempt in range(1, attempts + 1):
             logger.info(f"--- Profile '{profile.label}' (attempt {attempt}/{attempts}) ---")
             try:
-                if not self.ctx.profiles.switch_to(profile, siblings):
+                if not context.profiles.switch_to(profile):
                     raise SessionError(f"could not activate profile '{profile.name}'")
 
-                for position, module in enumerate(list(pending)):
+                for module in list(pending):
                     cancellation.check()
-                    if position:
-                        # Whatever the previous module left open is not this one's problem.
-                        self.ctx.game_state.close_modals()
-                    if self._run_module(module, account, profile, outcome):
+                    if self._run_module(context, module, account, profile, outcome):
                         pending.remove(module)
             except Cancelled:
                 raise
@@ -483,13 +511,12 @@ class ModuleRunner:
                 logger.error(f"Profile '{profile.label}': {exc}")
             except Exception as exc:  # noqa: BLE001
                 logger.exception(f"Unexpected failure on profile '{profile.label}': {exc}")
-                self._save_error_screenshot(f"profile_{profile.name}")
+                self._save_error_screenshot(context, f"profile_{profile.name}")
 
             if not pending:
                 break
             if attempt < attempts:
-                logger.info("Retrying the profile after resetting the board...")
-                self.ctx.game_state.prepare_board()
+                logger.info("Retrying the profile...")
 
         for module in pending:
             outcome[module.key] = False
@@ -499,12 +526,12 @@ class ModuleRunner:
                                  str(module.options.get("day_start") or module.default_day_start))
         return any(outcome.values())
 
-    def _run_module(self, module: BaseModule, account: AccountConfig, profile: ProfileConfig,
+    def _run_module(self, context, module: BaseModule, account: AccountConfig, profile: ProfileConfig,
                     outcome: Dict[str, bool]) -> bool:
         """One module on the active profile. True when it is finished with, for better or worse."""
         logger.info(f">> {module.title}: '{profile.label}'")
         try:
-            result = module.run_for_profile(profile)
+            result = module.on_window(context).run_for_profile(profile)
         except Cancelled:
             raise
         except SessionError as exc:
@@ -512,7 +539,7 @@ class ModuleRunner:
             return False
         except Exception as exc:  # noqa: BLE001 - one module must not take the others with it
             logger.exception(f"Unexpected failure of '{module.title}' on '{profile.label}': {exc}")
-            self._save_error_screenshot(f"{module.key}_{profile.name}")
+            self._save_error_screenshot(context, f"{module.key}_{profile.name}")
             return False
 
         result.setdefault("account", account.name)
@@ -542,12 +569,12 @@ class ModuleRunner:
             "reason": reason,
         })
 
-    def _save_error_screenshot(self, label: str) -> Optional[str]:
+    def _save_error_screenshot(self, context, label: str) -> Optional[str]:
         if not self.execution.get("screenshot_on_error", True):
             return None
         safe = "".join(c if c.isalnum() or c in "-_" else "_" for c in label)[:60]
         path = f"{screenshot_dir()}/{datetime.now():%Y%m%d_%H%M%S}_{safe}.png"
-        if self.ctx.browser.save_screenshot(path):
+        if context.browser.save_screenshot(path):
             logger.info(f"Screenshot of the failure saved to {path}")
             return path
         return None
