@@ -50,8 +50,7 @@ class Chests(Scripted):
 
 class Events(Scripted):
     key, title = "events", "Tournament rankings"
-    required_steps = EventsModule.required_steps
-    fresh_browser = EventsModule.fresh_browser
+    required_steps = ("journal_button",)
     configured_for = classmethod(lambda cls, profile: EventsModule.configured_for(profile))
 
 
@@ -95,24 +94,6 @@ class RunnerTest(unittest.TestCase):
 
         self.runner().run()
         self.assertIn(("chests", "Alpha"), self.log)
-
-    # ------------------------------------------------------- fresh browser
-    def test_a_run_with_tournament_rankings_due_starts_on_a_fresh_browser(self):
-        runner = self.runner()
-        runner.run()
-        self.assertEqual(1, self.ctx.browser.restarts)
-
-    def test_a_chest_only_run_keeps_the_open_browser(self):
-        runner = self.runner()
-        runner.run(only_modules=["chests"])
-        self.assertEqual(0, self.ctx.browser.restarts)
-
-    def test_the_fresh_browser_can_be_turned_off(self):
-        self.config.set("execution", "fresh_browser_for_rankings", False)
-        runner = self.runner()
-        runner.run()
-        self.assertEqual(0, self.ctx.browser.restarts)
-        self.assertIn(("events", "Alpha"), self.log)
 
     def test_the_lock_is_released_when_the_run_fails(self):
         runner = self.runner()
@@ -243,8 +224,7 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual([], self.log)
         self.assertEqual({("chests", "Alpha"), ("events", "Alpha"), ("chests", "Beta")},
                          {(f["module"], f["profile"]) for f in summary["failures"]})
-        # One because the tournament rankings are due, one because nothing was done on the account.
-        self.assertEqual(2, self.ctx.browser.restarts, "a fresh browser to start, then one for the retry")
+        self.assertEqual(1, self.ctx.browser.restarts, "a fresh browser for the retry")
 
     def test_a_module_whose_screens_were_never_calibrated_is_left_out_and_the_rest_runs(self):
         summary = self.runner(complete=False).run()
@@ -255,12 +235,12 @@ class RunnerTest(unittest.TestCase):
         self.assertIn("Incomplete calibration", failure["reason"])
         self.assertIn("Journal button", failure["reason"])
 
-    def test_without_the_shared_steps_nothing_starts(self):
+    def test_a_run_that_cannot_start_says_why(self):
         runner = self.runner()
-        self.ctx.calibration.forget("profile_menu_button")
+        self.ctx.calibration.out_of_bounds = lambda: ["clan_button"]
         with self.assertRaises(RunnerError) as refused:
             runner.run()
-        self.assertIn("Profile menu", str(refused.exception))
+        self.assertIn("OUTSIDE the page", str(refused.exception))
         self.assertEqual("Execution cannot start: " + str(refused.exception).split(": ", 1)[1],
                          self.chests.ended["error"], "the modules hear how the run ended")
         self.assertEqual(0, self.ctx.browser_starts)

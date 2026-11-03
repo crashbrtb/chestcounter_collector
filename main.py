@@ -13,7 +13,7 @@ exit with a status code the scheduler can act on (0 done, 1 failed,
     main.py --check         validate configuration and calibration, collect nothing
     main.py --account NAME  restrict the run to one account
     main.py --profile NAME  restrict the run to one profile
-    main.py --module KEY    run only this module (chests, members, events); may be repeated
+    main.py --module KEY    run only this module (shield, chests, members, events); may be repeated
     main.py --force         ignore the schedule: run once-a-day modules again
 """
 

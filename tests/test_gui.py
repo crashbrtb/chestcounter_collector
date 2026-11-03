@@ -59,21 +59,20 @@ class AppTest(unittest.TestCase):
         self.assertEqual(SCHEDULE_DAILY, self.app.widgets["modules.events"]["schedule"].get())
         self.assertEqual(SCHEDULE_EVERY_RUN, self.app.widgets["modules.chests"]["schedule"].get())
 
-        # Alpha has a clan site, nothing is calibrated yet: the card says so.
-        self.assertIn("not calibrated", self.app.module_status["events"].cget("text"))
+        # Alpha has a clan site; the Journal only needs calibrating for a new tournament.
         self.assertIn("1 profile(s) set up", self.app.module_status["events"].cget("text"))
         self.assertIn("2 profile(s) set up", self.app.module_status["chests"].cget("text"))
 
     def test_turning_a_module_off_is_saved_and_shown(self):
         self.app.widgets["modules.events"]["enabled"].deselect()
         self.app.widgets["modules.chests"]["schedule"].set(SCHEDULE_DAILY)
-        self.app.widgets["modules.events"]["reload_wait"].delete(0, "end")
-        self.app.widgets["modules.events"]["reload_wait"].insert(0, "45")
+        self.app.widgets["modules.events"]["days_back"].delete(0, "end")
+        self.app.widgets["modules.events"]["days_back"].insert(0, "45")
         self.app.save_parameters()
 
         saved = ConfigManager(self.config.path)
         self.assertFalse(saved.module("events")["enabled"])
-        self.assertEqual(45.0, saved.module("events")["reload_wait"])
+        self.assertEqual(45, saved.module("events")["days_back"])
         self.assertEqual(SCHEDULE_DAILY, saved.module("chests")["schedule"])
         self.assertIn("Disabled", self.app.module_status["events"].cget("text"))
         self.assertNotIn("Tournament rankings", self.app.lbl_info.cget("text"))
@@ -130,6 +129,55 @@ class AppTest(unittest.TestCase):
         self.assertEqual("cct_b", beta_saved.module_settings("events")["api_token"])
         self.assertEqual("clan_b", beta_saved.database.database)
 
+    def test_each_account_shows_its_port_and_folder_and_they_can_be_changed(self):
+        card = self.app.cards[0]
+        self.assertEqual("9322", card.cdp_port.get())
+        self.assertTrue(card.browser_profile.get().endswith("Main"))
+
+        card.show_window(type(card.account)(browser_profile=r"C:\elsewhere\Main", cdp_port=9500))
+        self.app.save_accounts()
+        [saved] = ConfigManager(self.config.path).accounts
+        self.assertEqual((9500, r"C:\elsewhere\Main"), (saved.cdp_port, saved.browser_profile))
+
+    def test_a_port_that_cannot_be_one_is_not_saved(self):
+        before = ConfigManager(self.config.path).accounts[0].cdp_port
+        card = self.app.cards[0]
+        for typed in ("abc", "80"):
+            card.cdp_port.delete(0, "end")
+            card.cdp_port.insert(0, typed)
+            errors = []
+            with mock.patch.object(gui_app.messagebox, "showerror", lambda *a, **k: errors.append(a)):
+                self.app.save_accounts()
+            self.assertEqual(1, len(errors), typed)
+        self.assertEqual(before, ConfigManager(self.config.path).accounts[0].cdp_port)
+
+    def test_a_port_left_empty_gets_a_free_one_when_saved(self):
+        card = self.app.cards[0]
+        card.cdp_port.delete(0, "end")
+        self.app.save_accounts()
+        self.assertEqual("9322", card.cdp_port.get())
+
+    def test_two_profiles_on_one_database_are_not_saved(self):
+        alpha, beta = self.app.cards[0].rows
+        beta.profile.database = alpha.profile.database
+        errors = []
+        with mock.patch.object(gui_app.messagebox, "showerror", lambda *a, **k: errors.append(a[1])):
+            self.app.save_accounts()
+        self.assertIn("same database", errors[0])
+        self.assertEqual("clan_b", ConfigManager(self.config.path).accounts[0].profiles[1].database.database)
+
+    def test_open_window_opens_the_saved_account_for_the_person(self):
+        opened = []
+
+        class Window:
+            def open_for_person(self):
+                opened.append(True)
+
+        self.app._run_in_background = lambda target, **options: target()
+        with mock.patch("core.context.browser_for", lambda config, account: Window()):
+            self.app.open_account_window(self.app.cards[0])
+        self.assertEqual([True], opened)
+
     def test_the_wizard_lists_one_calibration_grouped_by_module(self):
         from fakes import FakeBrowser, FakeContext
 
@@ -138,9 +186,9 @@ class AppTest(unittest.TestCase):
         wizard = CalibrationWizard(self.app, context)
         wizard.update()
         self.assertEqual(len(self.app.calibration.steps), len(wizard.rows))
-        self.assertEqual(["shared", "chests", "members", "events"], [g.key for g in wizard.calibration.groups])
+        self.assertEqual(["shared", "chests", "events"], [g.key for g in wizard.calibration.groups])
         wizard.go_to(len(wizard.steps) - 1)
-        self.assertEqual("Journal: close the card", wizard.lbl_title.cget("text"))
+        self.assertEqual("Journal: next page", wizard.lbl_title.cget("text"))
         wizard.destroy()
 
 

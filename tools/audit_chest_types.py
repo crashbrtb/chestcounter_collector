@@ -1,12 +1,12 @@
 """
 Looks through the database for chest types named wrong, the way type 5784 was.
 
-A type the game sends for the first time is named from the screen, and a type
-named wrong stays wrong: on 12/10/2026 type 5784 - Chest of the Cursed, of a
+A type used to be named from the screen the first time the game sent it, and a
+type named wrong stays wrong: on 12/10/2026 type 5784 - Chest of the Cursed, of a
 Level 35 epic Crypt - was read off a Fenrir chest that sat next to it on the
 panel, and hundreds of crypt chests were counted as Fenrir's from then on, long
-after the event had ended. modules/chests/from_game.py no longer lets a reading
-like that through; this finds what got in before.
+after the event had ended. The collector no longer reads the screen; this finds
+what got in before.
 
 Nothing here writes to the database. Each type is checked against what the
 others say about it:

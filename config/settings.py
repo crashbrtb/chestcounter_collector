@@ -12,6 +12,15 @@ of the cities that account owns. Collection follows exactly this order - log in
 to the account, then walk its profiles - which is why the profiles are nested
 inside the account instead of being a flat list.
 
+Each account lives in a Chrome window of its own, with its own debugging port and
+its own folder. The folder holds the session the game verified by e-mail, so an
+account has to open on the same one every time; both are written down the first
+time they are worked out (`ConfigManager.pin_windows`), and renaming an account
+does not move it.
+
+Each profile has a database of its own: two profiles writing to one would mix
+two clans' chests, so a run refuses that (`ConfigManager.database_problems`).
+
 A profile without database credentials is skipped by the chest module: there
 would be nowhere to record what was collected, and pretending otherwise would
 silently throw the chests away.
@@ -43,6 +52,17 @@ MODULE_DATA_DIR = os.path.join(CONFIG_DIR, "module_data")
 RUN_LOCK_PATH = os.path.join(CONFIG_DIR, "run.lock")
 LEGACY_CONFIG_PATH = os.path.join(BASE_DIR, "position.cfg")
 
+DEFAULT_PROFILES_DIR = os.path.join(os.path.expanduser("~"), ".total_battle_counter_profiles")
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
+
+
+def same_folder(first: str, second: str) -> bool:
+    return os.path.normcase(os.path.abspath(first)) == os.path.normcase(os.path.abspath(second))
+
+
+def _folder_name(text: str) -> str:
+    return "".join(c if c.isalnum() or c in "-_" else "_" for c in text.strip()) or "account"
+
 
 @dataclass
 class DatabaseConfig:
@@ -55,6 +75,12 @@ class DatabaseConfig:
     @property
     def is_usable(self) -> bool:
         return bool(self.host and self.user and self.database)
+
+    @property
+    def identity(self) -> tuple:
+        """What says two configurations are the same database, however they were typed."""
+        host = self.host.strip().lower()
+        return ("localhost" if host in LOCAL_HOSTS else host, self.port, self.database.strip().lower())
 
     def to_dict(self) -> dict:
         return {
@@ -133,9 +159,11 @@ class AccountConfig:
     login: str = ""
     password: str = ""
     enabled: bool = True
-    # Own browser profile folder, so this account keeps its own verified session.
-    # Empty = the shared profile, which is all a single account ever needs.
+    # Its Chrome window: the folder that keeps its verified session (a path, or a
+    # name inside the folder of profiles) and the debugging port to reach it on.
+    # Empty and 0 are filled in by ConfigManager.pin_windows.
     browser_profile: str = ""
+    cdp_port: int = 0
     profiles: List[ProfileConfig] = field(default_factory=list)
 
     @property
@@ -153,18 +181,24 @@ class AccountConfig:
             "password": self.password,
             "enabled": self.enabled,
             "browser_profile": self.browser_profile,
+            "cdp_port": self.cdp_port,
             "profiles": [p.to_dict() for p in self.profiles],
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "AccountConfig":
         name = str(data.get("name", "") or "")
+        try:
+            port = int(data.get("cdp_port", 0) or 0)
+        except (TypeError, ValueError):
+            port = 0
         return cls(
             name=name,
             login=str(data.get("login", "") or ""),
             password=str(data.get("password", "") or ""),
             enabled=bool(data.get("enabled", True)),
             browser_profile=str(data.get("browser_profile", "") or ""),
+            cdp_port=port,
             profiles=[ProfileConfig.from_dict(p, name) for p in data.get("profiles", []) or []],
         )
 
@@ -275,29 +309,75 @@ class ConfigManager:
         raw = self.get("execution", "log_dir") or "execution_logs"
         return raw if os.path.isabs(raw) else os.path.join(BASE_DIR, raw)
 
-    def user_data_dir(self) -> str:
-        raw = self.get("browser", "user_data_dir") or ""
-        if raw:
-            return os.path.expandvars(os.path.expanduser(raw))
-        return os.path.join(os.path.expanduser("~"), ".total_battle_chest_profile")
+    # -- windows
+    def profiles_dir(self) -> str:
+        raw = self.get("browser", "profiles_dir") or ""
+        return os.path.expandvars(os.path.expanduser(raw)) if raw else DEFAULT_PROFILES_DIR
 
-    def browser_profile_for(self, account: AccountConfig) -> str:
-        """
-        Which browser profile folder an account should use.
-
-        Empty on the account means the shared folder - the case of a single
-        account, and the one that must not change, because that folder already
-        holds a session the game has verified. A name becomes a sibling folder,
-        so each account keeps a verified session of its own.
-        """
-        custom = (getattr(account, "browser_profile", "") or "").strip()
-        default = self.user_data_dir()
-        if not custom:
-            return default
+    def chrome_folder_for(self, account: AccountConfig) -> str:
+        """The Chrome folder of an account: its own path, or a name inside the folder of profiles."""
+        custom = os.path.expandvars(os.path.expanduser((account.browser_profile or "").strip()))
         if os.path.isabs(custom):
-            return os.path.expandvars(os.path.expanduser(custom))
-        slug = "".join(c if c.isalnum() or c in "-_" else "_" for c in custom)
-        return os.path.join(os.path.dirname(default), f"{os.path.basename(default)}_{slug}")
+            return custom
+        return os.path.join(self.profiles_dir(), _folder_name(custom or account.name or account.login))
+
+    def pin_windows(self) -> bool:
+        """
+        Writes down the port and the folder of every account that has none yet.
+
+        Written, not worked out on each run: a folder derived from the name would
+        change with the name, and a new folder means another code by e-mail.
+        """
+        accounts = self.accounts
+        ports = {account.cdp_port for account in accounts if account.cdp_port}
+        folders = [self.chrome_folder_for(account) for account in accounts if account.browser_profile.strip()]
+        port = int(self.get("browser", "first_cdp_port", 9322))
+        changed = False
+        for account in accounts:
+            if not account.cdp_port:
+                while port in ports:
+                    port += 1
+                account.cdp_port = port
+                ports.add(port)
+                changed = True
+            if not account.browser_profile.strip():
+                base = self.chrome_folder_for(account)
+                folder, turn = base, 2
+                while any(same_folder(folder, other) for other in folders):
+                    folder, turn = f"{base}_{turn}", turn + 1
+                account.browser_profile = folder
+                folders.append(folder)
+                changed = True
+        if changed:
+            self.accounts = accounts
+            self.save()
+        return changed
+
+    def window_problems(self, accounts: Optional[List[AccountConfig]] = None) -> List[str]:
+        """Active accounts that would share a Chrome window."""
+        active = [a for a in (self.accounts if accounts is None else accounts) if a.enabled]
+        problems = []
+        for index, account in enumerate(active):
+            for other in active[index + 1:]:
+                if account.cdp_port and account.cdp_port == other.cdp_port:
+                    problems.append(f"Accounts '{account.name}' and '{other.name}' use the same port "
+                                    f"({account.cdp_port}). Each window needs its own.")
+                if same_folder(self.chrome_folder_for(account), self.chrome_folder_for(other)):
+                    problems.append(f"Accounts '{account.name}' and '{other.name}' use the same Chrome folder "
+                                    f"({self.chrome_folder_for(account)}). Each keeps its session in its own.")
+        return problems
+
+    def database_problems(self, accounts: Optional[List[AccountConfig]] = None) -> List[str]:
+        """Active profiles that would write to the same database."""
+        users: Dict[tuple, List[str]] = {}
+        for account in (self.accounts if accounts is None else accounts):
+            if account.enabled:
+                for profile in account.active_profiles:
+                    if profile.has_database:
+                        users.setdefault(profile.database.identity, []).append(f"{account.name} / {profile.name}")
+        return [f"Profiles {', '.join(names)} use the same database ('{identity[2]}' on {identity[0]}). "
+                f"Each profile needs its own."
+                for identity, names in users.items() if len(names) > 1]
 
 
 def migrate_legacy_config(legacy_path: str = LEGACY_CONFIG_PATH) -> List[AccountConfig]:

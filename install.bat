@@ -52,8 +52,7 @@ if defined SYS_PYTHON (
     python -c "import sys; sys.exit(0 if sys.version_info[:2] >= (3,15) else 1)" >nul 2>nul
     if not errorlevel 1 (
         echo [WARN] Python %SYS_PYVER% is newer than anything this has been tried on.
-        echo        The OCR engine needs an 'onnxruntime' build for it; if the install
-        echo        below fails, use Python 3.14.
+        echo        If the install below fails, use Python 3.14.
     )
     echo Creating virtual environment...
     python -m venv "%VENV_DIR%"
@@ -85,7 +84,6 @@ echo === Upgrading pip ===
 
 echo.
 echo === Installing dependencies ===
-echo     (RapidOCR downloads ~15 MB of models on first reading)
 "%VENV_DIR%\Scripts\python.exe" -m pip install -r "%SCRIPT_DIR%requirements.txt"
 if errorlevel 1 (
     echo [ERROR] Failed to install dependencies.

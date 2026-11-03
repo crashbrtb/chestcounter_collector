@@ -29,13 +29,7 @@ STEP_NAMES = {
     "card1_title": "journal_card1_title",
     "card2_title": "journal_card2_title",
     "card_icon": "journal_card_icon",
-    "page_area": "journal_page_area",
     "next_page": "journal_next_page",
-    "card_open": "journal_card_open",
-    "show_details": "journal_show_details",
-    "ranking_list": "journal_ranking_list",
-    "details_close": "journal_details_close",
-    "card_close": "journal_card_close",
 }
 
 

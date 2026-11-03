@@ -15,12 +15,15 @@ from .base_module import BaseModule
 from .chests import ChestCollector
 from .events import EventsModule
 from .members import MembersModule
+from .shield import ShieldModule
 
-# Chests first: it is the job that runs every time. The members module comes
-# right after because its screens are in the same clan window, which is where
-# the wizard is when the chest steps end. The events module then reads the
-# Journal on the game as the others left it.
-MODULES: List[Type[BaseModule]] = [ChestCollector, MembersModule, EventsModule]
+# The shield first: it takes seconds, and a city left unprotected because a long
+# job failed or ran over is the costliest thing that could go wrong. Then the
+# chests, the job that runs every time. The members module comes right after
+# because its screens are in the same clan window, which is where the wizard is
+# when the chest steps end. The events module then reads the Journal on the game
+# as the others left it.
+MODULES: List[Type[BaseModule]] = [ShieldModule, ChestCollector, MembersModule, EventsModule]
 
 MODULES_BY_KEY: Dict[str, Type[BaseModule]] = {module.key: module for module in MODULES}
 

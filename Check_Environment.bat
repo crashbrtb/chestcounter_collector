@@ -1,6 +1,6 @@
 @echo off
 REM ==============================================================================
-REM  Quick environment diagnostics (RapidOCR, Python, Tesseract)
+REM  Quick environment diagnostics (Python and its libraries)
 REM ==============================================================================
 setlocal
 cd /d "%~dp0"

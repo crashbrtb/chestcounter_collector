@@ -11,10 +11,11 @@ hand-written coordinates — everything is calibrated by clicking directly on th
 screen and configured through a graphical interface.
 
 The application is made of **modules**, each one a job done on a profile of the
-game. Three exist today, and the structure is there for more:
+game. Four exist today, and the structure is there for more:
 
 | Module | What it does | Runs |
 |---|---|---|
+| **Shield of Peace** | Asks the game when the city's shield ends and, with less than a day left, buys a new one with gold and activates it | every run |
 | **Clan chests** | Opens every clan gift and records it in the profile's database | every run |
 | **Clan members** | Reads the clan's Members list — player id, name, power, rank and level of every member — from the game's own traffic | once a day |
 | **Tournament rankings** | Reads the clan's tournament results in the Journal and sends the rankings to the clan site (the former standalone *EventUploader*) | once a day |
@@ -33,20 +34,6 @@ If an older version's `position.cfg` exists, `install.bat` automatically imports
 database credentials from it: profiles will already appear registered, requiring
 only the account login credentials.
 
-### Tesseract (recommended)
-
-While RapidOCR is installed via `pip`, Tesseract is a standalone program — and
-it is the **primary** and fastest of the two OCR engines. Collection still
-works without it (falling back to RapidOCR), though it will be slower and won't
-preserve certain accents.
-Install [Tesseract for Windows](https://github.com/UB-Mannheim/tesseract/wiki)
-with language packages selected (e.g., Portuguese/English as needed).
-
-The tournament module reads the Journal card titles with it as well: Tesseract
-keeps the spaces between words, which is what the tournament name is cut out
-by. Without it the titles are read by RapidOCR alone, which tends to glue words
-together.
-
 ---
 
 ## Usage
@@ -57,7 +44,7 @@ Double-click to run without needing a command prompt:
 |---|---|
 | **`Configure.bat`** | Opens the interface: modules, accounts, profiles, databases, and all parameters |
 | **`Calibrate.bat`** | Opens the calibration wizard directly |
-| **`Check_Environment.bat`** | Quick diagnostic check for Python, RapidOCR, ONNXRuntime, and Tesseract |
+| **`Check_Environment.bat`** | Quick diagnostic check for Python and its libraries |
 | `run.bat` | Runs every enabled module that is due. **This is what Windows Task Scheduler should call.** |
 
 The first two are shortcuts for `run.bat`, which also accepts `run.bat config`,
@@ -65,7 +52,7 @@ The first two are shortcuts for `run.bat`, which also accepts `run.bat config`,
 without running anything) for command-line users.
 
 From a command prompt, `main.py` takes a few more options: `--module chests`
-(or `members`, `events`; may be repeated) runs only that module, `--force` ignores the
+(or `shield`, `members`, `events`; may be repeated) runs only that module, `--force` ignores the
 schedule so a once-a-day module runs again, and `--account` / `--profile`
 restrict the run to one of them.
 
@@ -136,33 +123,54 @@ on every profile set up for it, ignoring the schedule and the *Enabled* switch
 
 ### Clan chests
 
-Runs on every profile that has a **database**. Everything from *Calibration*
-down to *Error Handling* below is about this module.
+Runs on every profile that has a **database**. It talks to the game over the
+network, from inside the game's own tab; the screen is only pictured for a chest
+type met for the first time:
 
-### Clan members
+1. the player, the session and the server's address are learned from the requests
+   the game itself keeps sending; the session stays in memory and is never logged
+   or saved;
+2. the game is asked for the profile's clan and for the list of gifts waiting;
+3. each gift whose type has a name, oldest first, is written to the database and
+   then opened, one request at a time, each waiting for the game's answer;
+4. the list is asked for again: a gift that is still there untouched was not opened,
+   so what was written for it is taken back, and whatever arrived meanwhile is
+   collected too;
+5. if chests of an unnamed type are left, the gifts panel is opened, scrolled to the
+   first of them and read; the type is registered in `game_chest_types`, and the
+   collection goes on over the network, now knowing it. Then the next type.
 
-Runs on every profile where **Read clan members** is ticked — per profile in
-*Accounts and profiles › Modules…*. The list is the clan's, so one profile of
-each clan is enough.
+| Field | Where it comes from |
+|---|---|
+| Player | the player's id; named by `members.game_player_id`, or by the game itself when the site does not know the id |
+| Chest and source | the type id; named by `game_chest_types`, or by the chests already written with that type when they all agree |
+| Generation time | expiry to the second, minus the chest's twenty hours |
+
+- **A new type** is named by a person, not read. Its chests are opened and filed in
+  the site's *Incomplete Chests* queue with their code, player and date, the first
+  with a picture of the panel. Naming one there names the type: its other pending
+  chests are recorded with it, and the next ones are collected normally. A type that
+  cannot be pictured stays in the game for the next run, and the run is reported as
+  not finished. A gift with less than an hour to live goes to the queue without one.
+- **The calibration** of the gifts panel (*Clan button* to *Open button*) is only
+  used for that picture. Without it the known chests are collected all the same.
 
 One reading, for one profile:
 
-1. a second connection to the game tab starts listening to what the game
-   receives — nothing is read off the screen;
-2. the **Clan** button is clicked: the game answers with the clan and its
-   membership, the player id and rank of every member;
-3. **Members** is clicked: the game answers with the members' profiles — name,
-   power, level, place on the map. The whole clan comes in that one answer;
-4. only if the membership names someone no profile came for, the list is
-   scrolled (inside *Clan: members list*) until that stops being true. A list
-   that still ends short is not saved, and the reading is tried again.
+1. the game is asked over the network, from inside its tab, for the clan and its
+   membership: the player id and rank of every member. Nothing is clicked or read
+   off the screen;
+2. it is asked for those members' profiles — name, power, level, place on the
+   map — 100 at a time;
+3. a list that ends short is asked for once more, and is not saved if it still
+   does.
 
 The result is kept per clan in `config/module_data/members/`, replaced at each
 reading: `<TAG>_<clan id>.json` and the same rows as a `.csv` that opens in a
 spreadsheet (`player_id, name, power, rank, rank_name, level, kingdom, x, y`).
 Ranks are the game's own: 1 Leader, 2 Superior, 3 Officer, 4 Veteran, 5 Soldier.
 
-It needs two calibration steps besides the chests' *Clan button*: *Clan:
+It needs two calibration steps besides the *Clan button*: *Clan:
 Members* (the menu entry) and, optionally, *Clan: members list*.
 
 **To the clan site.** With *Send the list to the clan site* on (the default), a
@@ -181,6 +189,23 @@ a name that differs only in spaces, accents, punctuation or case (`TonyStanna`
 is `Tony Stanna`); a member it cannot find that way is created anew and the old
 row made inactive — merge the two on the site's chests page.
 
+### Shield of Peace
+
+Runs on the profiles it is turned on for (*Keep the shield up*, in *Accounts and
+profiles › Modules…*). Everything goes over the network, without clicking:
+
+1. the game is asked when the shield of the profile's city ends;
+2. with less than *Renew with less than (hours)* left (24 by default), or with no
+   shield up, a shield is bought with gold and activated. A new shield replaces the
+   current one and lasts 7 days;
+3. the game is asked again, and the renewal only counts if the end moved.
+
+**Spends gold, and needs runs closer together than that limit**: with a run a day
+and a limit of 24 hours, a shield can end before the next run sees it. A shield
+bought but not activated (the game can refuse one while a march is out) is reported
+as a failure and not retried in that run; the next run buys another, since what the
+player already holds is not read.
+
 ### Tournament rankings
 
 Runs on every profile that has a **clan site address and API token** — set per
@@ -192,20 +217,22 @@ token.
 
 One search, for one profile:
 
-1. the site is asked whether it accepts the token — before anything is clicked;
-2. a second connection to the game tab starts listening to what the game
-   receives (the rankings travel in the game's own traffic; nothing is read off
-   the screen but the tournament names);
-3. the search starts at once, on the game as the previous module left it. (The
-   game does not send again a ranking it already fetched since the page loaded;
-   if rankings come back without an answer, *Reload the game before searching*
-   reloads the page first, at the cost of a minute per profile);
-4. the Journal is walked, newest first: each *"Your Clanmates' results in …"*
-   card is opened, *Show details* is pressed, and the ranking list is scrolled
-   until the game has sent every player's name. The walk goes back *Days to
-   look back* days at most, by the age each card shows (*yesterday*, *7 days
-   ago*), and after a complete search only the days since that search — plus
-   one of overlap. Raising *Days to look back* walks all of them once;
+1. the site is asked whether it accepts the token, before the game is asked anything;
+2. the game is asked for the Journal over the network, newest first, through the
+   socket it keeps open for it. Nothing is clicked and no card is marked as read.
+   The walk goes back *Days to look back* days at most, and after a complete
+   search only the days since that search, plus one of overlap. Raising *Days to
+   look back* walks all of them once;
+3. each card of the clan's results has its ranking asked for, and the players
+   without a name have their profiles asked for;
+4. the game sends a tournament's type but never its name. The site's catalogue
+   names the types it knows. A new one is told to the catalogue with a picture of the
+   Journal page, its card outlined (the only use of the calibration). It shows up on
+   the site under *Admin › Events › Pending Tournaments*, for a person to name. Its
+   rankings wait: the search is reported as not complete, and the first one after the
+   naming sends them. Name it within *Days to look back*, or raise that setting, since
+   a search walks no further back than that. A card far down the Journal costs a click
+   per page, 1.2 s each;
 5. the site is asked which of those tournaments it already has, and the rest
    are sent. A ranking where every player has a name is published right away;
    the others stay as drafts for review on the site;
@@ -223,8 +250,7 @@ token is not imported (it lives in the Windows Credential Manager): paste it on
 the profile. If the Journal was calibrated at a different window size than the
 chests, the import says so — check each Journal step with *Test this step*.
 Once this module is running, disable the uploader's own scheduled task
-(`BuscarTorneios`): two programs clicking in the same game at the same time
-would get in each other's way.
+(`BuscarTorneios`): two programs driving the same game would get in each other's way.
 
 ### Adding a module
 
@@ -254,22 +280,27 @@ Account  (totalbattle.com email + password)
   └── Profile (city)  → dedicated database
 ```
 
-Collection strictly follows this hierarchy: it logs into the account and visits
-its profiles before proceeding to the next account.
+An account's profiles are visited one after the other, while **accounts work at
+the same time**, each in its own Chrome window (*Execution › Accounts at the same
+time*: up to 4, and 1 for one account after the other).
 
-**Browser sessions are preserved, never wiped.** Clearing cookies causes the
-game to treat the browser as a new device and send an email verification code
-— which an unattended nightly run cannot respond to. Therefore, each run simply
-inspects where the page currently is: already authenticated, or on the login
-screen. Logging in becomes the exception rather than routine.
+**Each account has its own window**: a debugging port and a Chrome folder, written
+down the first time and shown on the account in *Accounts and profiles*. Ports start
+at *First debugging port* (9322), away from other tools on 9222. Folders are in
+`%USERPROFILE%\.total_battle_counter_profiles`. Change a port or a folder there if
+it clashes with something else; two active accounts cannot share either. A Chrome
+found on the account's port is only used after its command line shows it is on the
+account's folder: anything else stops that account and is left open.
 
-With **multiple accounts**, each account requires its own *Browser profile*
-(a dedicated user data directory configured in Accounts and Profiles). This
-allows each account to maintain its own verified session, and the browser is
-relaunched with that profile directory when switching accounts. If two accounts
-share the same profile directory, execution **halts before starting** with an
-explanation — otherwise, the second account would run within the first account's
-session and save chests into the wrong database.
+**The first login of a folder is by hand.** The game mails a code to a browser it
+does not know, and an unattended run cannot answer it. On a new folder the password
+is not even typed: that account stops and says so, and the others go on. Press *Open
+window* on the account, log in and type the code. The session stays in the folder, and
+if the game drops it later the password is enough. A new folder means a new code.
+Telling that the game is asking for the code goes by how such fields are named.
+
+**Each profile has its own database.** Two active profiles on the same one, in any
+account, cannot be saved, and a run refuses to start.
 
 **A profile without a database configured is skipped** by the chest module, with
 a warning in the log, as there would be nowhere to store collected records. What
@@ -314,7 +345,7 @@ magnifier follows your cursor. The recorded coordinates are native page pixels:
 independent of window position and Windows display scaling.
 
 There is **one calibration for every module**. The steps all modules depend on
-come first (the store, the profile menu, the active profile name), then each
+come first (the store), then each
 module's own steps under its name. A step is known by its name, so a point two
 modules need is calibrated once. Only the steps of the modules in use are
 required; the others can be left for when the module is set up.
@@ -339,223 +370,19 @@ unresponsive buttons.
 The **🔎 Test this step** button exercises the step live in the running game and
 **measures** results: for clicks, it compares before and after screenshots and
 reports *"clicked (x, y) and screen changed 13%"* or *"screen DID NOT change: click
-hit empty space"*; for areas, it displays the recognized OCR text; for reference
+hit empty space"*; for areas, it asks you to check the capture; for reference
 images, it reports whether the template was matched and with what similarity score.
-
-**Scrollable profile lists** are handled automatically: the collector scrolls to
-the top, searches for the name, scrolls down, and repeats until the list stops
-moving — ensuring accounts with many profiles are fully traversed. If clicking
-the profile menu does not change the screen, the log explicitly reports this
-rather than misattributing the issue to OCR.
-
-The **Chest text** area must reach far enough right to include the **Time left**
-counter. That counter is what dates the chest: a chest appears showing
-`19 h : 59 m` and counts down, so `12 h : 40 m` left means it was generated 7h19
-ago, and that is the hour stored in `collected_at` — not the hour the collector
-read it. Without the counter inside the marked area every chest of a run is dated
-on arrival, which is what it used to do. Including it costs nothing: the counter
-and the "Open" caption are cut off the reading by where they are printed, so
-neither reaches the database.
-
-The **🧰 Test chest capture** button tests the three chest steps together, which
-is the only way they mean anything: the "Open" button is found by its picture and
-each chest's text is placed relative to the button found for it. It runs the
-collector's own detection against the live screen and draws the answer — a box
-around every button found, a box around the text area that belongs to it, what was
-read inside each one, and each chest's countdown with the generation time it would
-store — so a panel of four chests is confirmed before a run rather than after.
 
 **Advance automatically** also performs the step. A step that marks a button
 presses it, waits, takes a fresh capture and only then opens the next step, so
 the game arrives at the screen that step describes instead of being left a screen
 behind. If the click changes nothing the wizard stays where it is and says so.
-Steps that only mark an area to read have nothing to press. The "Open" button is
-never pressed automatically: it would consume a chest that nothing records.
+Steps that only mark an area to read have nothing to press.
 
 Each step can be recalibrated individually without redoing the entire sequence.
 The first two steps (store detection and close button) are optional and come
 first because the store is what covers everything else — the game opens it by
 itself, and closing it is what clears the screen for the rest of the sequence.
-
----
-
-## OCR
-
-The primary motivation for version 2.0 was resolving misread foreign and
-accented names, which caused chests to be credited to the wrong players.
-
-Benchmark comparison on game-rendered text (light text on dark textured background):
-
-| Engine | Letters Correct | Accents Correct | Error Example |
-|---|---|---|---|
-| Tesseract | 6/8 | 3/8 | `Şükrü Öztürk` → `Sukriú Oztiirk` |
-| RapidOCR | 7/8 | 0/8 | `Aurélio Gonçalves` → `Aurelio Goncalves` |
-| **Both Combined** | **7/8** | **3/8** | — |
-
-Neither engine is sufficient on its own: Tesseract preserves Latin accents but
-can misidentify characters in Turkish or Nordic names; RapidOCR identifies
-characters accurately but lacks diacritics in its dictionary. The default
-(`auto`) mode combines both: **characters from RapidOCR, accents from Tesseract**,
-applied only when both agree on the underlying letter. Neither engine invents
-accents that do not exist; they only omit them, making this rule robust.
-
-Tesseract also restores **word spacing**: RapidOCR frequently groups adjacent
-words together (`ShadowChest`, `Level35epicCrypt`) because it detects whole
-phrases as blocks, whereas Tesseract segments words correctly. When character
-readings agree, the spaced form is used — preserving consistency with years of
-historical records already stored in the database.
-
-Furthermore, cropped regions are rendered **directly by Chrome** at the configured
-scale (`ocr.capture_scale`), allowing OCR engines to process genuinely larger
-glyphs rather than blurry upscaled screenshots.
-
-### Engine Execution Order
-
-**Tesseract runs first** as it is the faster engine (~310 ms). RapidOCR is only
-called when Tesseract's confidence drops — benchmarking showed correct readings
-score between 71 and 96, whereas erroneous readings scored 16 and 35. Because
-clans repeat the same names and sources across thousands of chests, strings
-already cross-validated by both engines are cached: in practice, secondary checks
-drop to zero after the first batch.
-
-Benchmark comparison on the chest panel (4 chests, 100% accuracy):
-
-| Engine | Duration |
-|---|---|
-| **Tesseract** (por, psm 6, oem 1) | **310 ms** |
-| RapidOCR (4 threads, no classifier) | 462 ms |
-| onnxtr `fast_tiny` | 1040 ms |
-| easyocr | untested — would require ~2.5 GB PyTorch |
-
-### Speed Optimizations
-
-Measured in-game, per chest: **from 2278 ms originally down to 212 ms** — 1000
-chests drop from 38 minutes to approximately 3.5 minutes. Improvements made:
-
-| Change | Impact |
-|---|---|
-| Read 4 screen chests in a single pass | Engine execution cost is identical for 1 vs 4 chests |
-| Tesseract first, RapidOCR on demand | 462 → 310 ms, dropping to 0 ms for cached names |
-| Memory cache for verified readings | Zero cross-checks after initial batches |
-| Single-language Tesseract model | 446 → 310 ms |
-| 4 threads in RapidOCR | 1646 → 375 ms (8 threads worsen: 1097 ms due to contention) |
-| Disabled angle classifier | −490 ms (game UI text is never rotated) |
-| `capture_scale` 2.0 instead of 3.0 | Capture time drops 477 → 263 ms with identical accuracy |
-
-To optimize speed further, adjust **Chest click delay** (`timing.chest_click_delay`,
-default 0.25s). Because chests are clicked bottom-up — opening a chest only shifts
-items below it — there is no need to wait for the entire list to re-settle between
-clicks.
-
-### Reading the Chests from the Game's Own List
-
-The screen is no longer where a chest's data comes from. When the clan window is
-opened the game sends the list of gifts that are waiting, and the collector
-listens to it (the same way the *Clan members* and *Tournament rankings* modules
-listen): for each gift its id, the id of the player who sent it, the chest type,
-the moment it expires and how many chests it is. The screen is still what gets
-clicked — there is no other way to open a chest — but it is only read to find
-the **Open** buttons.
-
-| | From the screen | From the game's list |
-|---|---|---|
-| Player | name read by OCR, matched to the member list | the player's id in the game (`members.game_player_id`) |
-| Chest and source | text read by OCR, matched to known spellings | the chest type id, named by `game_chest_types` |
-| Generation time | countdown in whole minutes | expiry to the second, minus the chest's twenty hours |
-| A chest counted twice or missed | cannot be noticed | the list is asked for again at the end and the database is made to agree with it |
-
-Measured on a real collection of 859 chests recorded both ways
-(`tools/chest_traffic.py`): every chest was in the list, in the order the panel
-shows them, and the screen had one batch of four wrong — the panel was captured
-a moment before it redrew, so one chest was written twice and another not at all.
-
-What it needs, and what happens without it:
-
-- **The clan site's database** must have the `game_chest_types` table and the
-  `game_gift_id`, `game_type_id` and `game_player_id` columns of
-  `collected_chests` (site migrations `CreateGameChestTypes` and
-  `AddGameIdentityToChests`). On an older site the collector says so in the log
-  and reads the screen as before.
-- **A chest type met for the first time** is named from the screen, once, and
-  written to `game_chest_types`. The reading is believed only when its countdown
-  agrees with the gift's own expiry; otherwise the chest goes to the review queue
-  with its picture and the ids the game did send.
-- **`game_chest_types` and `standard_chests` are two tables on purpose.**
-  `standard_chests` has one row per *source* — what the clan scores — and a
-  source gives several chests (a *Level 25 Crypt* alone has twelve), each with
-  its own type id in the game. A type points at the row of its source, and takes
-  that row's spelling when the chest is written, since the scoring joins on it.
-- **The Triumphal Gifts tab** is still read from the screen: it was empty on
-  every recording made, so how the game lists those gifts is not known yet.
-- The module setting **Read the chests from the game's own list** turns all of
-  this off, and every chest is read from the screen again.
-
-### Database-Assisted OCR Correction
-
-A clan environment is a bounded dataset: a few hundred members, around ninety
-chest types, and approximately one hundred sources — all previously recorded in
-`collected_chests`, `members`, and `player_name_mappings`. Prior to collecting a
-profile, the collector loads this vocabulary (a one-time ~634 ms query against
-hundreds of thousands of chests) and **matches** read values against known records.
-
-**The clan's member list decides whose chest it is.** A clan chest can only
-come from someone in the clan, so once the *Clan members* module has sent the
-game's own list to the site, the active members are everyone a player name can
-be. A reading is compared by what a screen reading cannot change — no case,
-accents, spacing or punctuation, no letters outside the Latin alphabet (no
-engine here writes them), and the look-alikes `I`/`l`/`1` and `O`/`0` as one:
-
-- read exactly as a member's name, it is that member;
-- sharing that key with **one** member, it is recorded under the game's
-  spelling: `HeStla BR` → `HeStIa BR`, `DRIKA BR` → `DRIKA BRف`;
-- sharing it with **more than one** member (`Alok BR` and `ALOK BR` are two
-  people), it is read again with the careful engine and, if still not exactly
-  one of them, recorded as read for a person to correct — never handed to one
-  of the two;
-- like nobody in the list, it is matched the old way, below.
-
-The list is only trusted for **26 hours** after it was read from the game (the
-site keeps that moment as its `member_list` job): past it, someone may have
-joined under a name the list has not seen, and names are matched the old way
-until the list is read again. The log says which of the two is in force.
-
-**What matching does otherwise:**
-
-1. Applies manual corrections configured in `player_name_mappings`.
-2. Resolves minor **formatting** discrepancies against known names — identical
-   letters and digits differing only by spacing, punctuation, or casing:
-   `AncientWarrior'sChest` → `Ancient Warrior's Chest`, `|IMPERATOR` → `IMPERATOR`.
-
-**What matching does NOT do:**
-It will never arbitrarily substitute one name for another based on fuzzy
-similarity alone. Similarity thresholds (e.g. 0.88) would conflate distinct entities:
-`Common Chest of Wealth` matches `Uncommon Chest of Wealth` (0.957),
-`DaNyx Darkher` matches `Nyx Darkher` (0.917), and `Pandeménia` matches `Pandeménio` (0.900).
-A misspelled name recorded in the database will be visible in web reports and can
-be mapped once in `player_name_mappings` for future runs. Conversely, mistakenly
-merging two distinct players leaves no trace and cannot be undone. Therefore,
-**unrecognized names are stored exactly as read**.
-
-Matching also improves speed: when all three fields match known vocabulary, the
-slower secondary engine check is bypassed.
-
-Vocabulary hierarchy: **authoritative reference tables first, history second**.
-For sources, the reference table is `standard_chests` (which determines event
-scoring). For players, references are `members` and manual mappings. The historical
-records in `collected_chests` cover unlisted sources. Chest names follow frequency
-rankings.
-
-**Names differing only by numerical suffixes are kept distinct:** player names
-such as `Player`, `Player 1`, and `Player 11` are treated as different individuals.
-When alphabetic letters match but numeric digits do not, matching is rejected.
-
-### Profiles with Similar Names
-
-Names like `Crash BR` and `Cash BR` are close enough that generic similarity tests
-could accept either. Instead of a simple threshold check, names **compete**: the
-scanned text is compared against all profiles registered under the account, and
-only wins if it decisively beats competitors. Ties are treated as ambiguous
-reads rather than risking switching to the wrong profile.
 
 ---
 
@@ -574,26 +401,17 @@ attention rather than manual data entry.
 
 ### Incomplete Chests Review Queue
 
-An unreadable chest no longer interrupts collection: the **screenshot crop** is
-saved to `incomplete_chests.screenshot` (PNG, ~115 KB) and the chest is opened
-so collection proceeds.
+A chest of a new type, a chest about to expire whose type could not be pictured, a player the game does not
+name, or a row the database refused do not interrupt collection: the chest is filed in `incomplete_chests` with what is known and the
+game's ids, and opened.
 
-In the web interface under **Admin › Chests › Incomplete Chests**, pending
-records are displayed alongside their screenshots. Reviewers can read the image
-and either **correct** the entry (which writes to `collected_chests` **with the
-original collection timestamp** to preserve scoring cycles) or mark it as
-**reviewed and unrecoverable**.
+In the web interface under **Admin › Chests › Incomplete Chests**, reviewers can
+**correct** the entry (which writes to `collected_chests` **with the original
+timestamp** to preserve scoring cycles) or mark it as **reviewed and unrecoverable**.
+A chest recovered by a person is saved with `type = 1` (*Manual*).
 
-If a chest was manually recovered by a person, it is saved with `type = 1`
-(*Manual*), distinguishing automated OCR from manual entry.
-
-**Empty screens do not immediately terminate runs.** The game occasionally
-delays refreshing chest lists after opening the last items. The collector waits
-1 second and checks again, terminating only if the screen remains empty.
-
-Chests are read and written to the database before the open click is executed.
-If a click fails, the chest will simply be re-read on the next execution:
-duplicate entries are easily corrected, while missed chests cannot be recovered.
+Chests are written to the database before they are opened. A chest written and not
+opened can be put right, while one opened and not written cannot be recovered.
 
 ---
 
@@ -601,14 +419,17 @@ duplicate entries are easily corrected, while missed chests cannot be recovered.
 
 ```
 config/     config.json (all parameters) · calibration.json · schema.py
-core/       browser (CDP) · ocr · vision · calibration · session
+core/       browser (CDP) · vision · calibration · session
             runner (accounts > profiles > modules) · schedule (once a day)
 modules/    base_module (what a module is) · registry (the list of modules)
-  chests/   collector · steps
+  chests/   collector · from_game (the collection) · game_link (the network) · gifts (the packets)
+            screen (the name of a new type) · steps
   members/  module · roster (the clan's packets) · steps · store (json + csv)
+  shield/   module (reads, buys and activates the shield over the network)
   events/   module · mapper (walks the Journal) · autosend (the search)
+            feed (asks the game) · screen (a new tournament's name)
             journal · tbcodec (the game's packets) · traffic (listens via CDP)
-            api (clan site client) · layout · titles · store · legacy (import)
+            api (clan site client) · layout · store · legacy (import)
 gui/        app (configuration UI) · calibration_wizard
 database/   MySQL connections and repositories
 utils/      logger · cancellation · text processing

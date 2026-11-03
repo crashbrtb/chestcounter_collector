@@ -61,9 +61,6 @@ class FakeBrowser:
         self.restarts = 0
         self.reloads = 0
 
-    def switch_profile(self, _folder):
-        return True
-
     def navigate(self, *_args, **_kwargs):
         pass
 
@@ -88,10 +85,6 @@ class FakeBrowser:
 
 class FakeLogin:
     enabled = False
-    clear_between_accounts = False
-
-    def end_session(self):
-        pass
 
 
 class FakeProfiles:
@@ -102,7 +95,7 @@ class FakeProfiles:
         self.reachable = True
         self.active = None
 
-    def switch_to(self, profile, _siblings=()):
+    def switch_to(self, profile):
         self.switched.append(profile.name)
         if self.reachable:
             self.active = profile.name
@@ -130,24 +123,21 @@ class FakeGameState:
         self.closed += 1
 
 
-class FakeOcrEngine:
-    def status(self):
-        return True, "fake engine"
-
-
 class FakeContext:
     """What core.context.RunContext gives a run, without a browser behind it."""
 
-    def __init__(self, config, calibration, browser=None, ocr=None):
+    def __init__(self, config, calibration, browser=None):
         self.config = config
         self.calibration = calibration
         self.browser = browser or FakeBrowser()
-        self.ocr = ocr or FakeOcrEngine()
         self.vision = None
         self.game_state = FakeGameState()
         self.login = FakeLogin()
         self.profiles = FakeProfiles()
         self.browser_starts = 0
+
+    def for_account(self, _account):
+        return self
 
     def start_browser(self):
         self.browser_starts += 1

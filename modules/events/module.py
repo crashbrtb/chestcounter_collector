@@ -1,11 +1,11 @@
 """
 Events module - the clan's tournament rankings, from the Journal to the clan site.
 
-For each profile it listens to what the game receives, walks the Journal opening
-every "Your Clanmates' results in ..." card, and sends the rankings the site
-does not have yet (see autosend.py for the whole search). It was the standalone
-EventUploader; here it runs on the profile the application has just switched to,
-with the browser, the OCR and the calibration every module shares.
+For each profile it asks the game for the Journal over the network and sends the
+rankings the site does not have yet (see autosend.py for the whole search). It was
+the standalone EventUploader; here it runs on the profile the application has just
+switched to. The screen is only pictured for a tournament type the site has never
+heard of, so a search does not depend on the calibration until that happens.
 
 One clan, one site, one token
 -----------------------------
@@ -16,8 +16,7 @@ not searched.
 
 Once a day
 ----------
-A search costs a walk through the Journal, and the site only needs it after
-tournaments end, so the module runs once a day by default (see
+The site only needs a search after tournaments end, so the module runs once a day by default (see
 core/schedule.py): the first run of the day that completes the search is the
 day's search, and one that does not is tried again on the next run. The day is
 the game's, starting at `day_start` (14:00 by default), when the tournaments of
@@ -25,17 +24,9 @@ the day before have ended.
 
 How far back
 ------------
-The Journal says how long ago each card was received ("yesterday", "7 days
-ago"). A search walks back `days_back` days at most, and after a complete one
-only the days since it (store.SearchMemory) - so a daily run reads a page or
+Every entry of the Journal says when it was received. A search walks back `days_back` days at most, and after a complete one
+only the days since it (store.SearchMemory) - so a daily run asks for a page or
 two, not the whole Journal again.
-
-No reload
----------
-The search starts on the game as the previous module left it. The game does not
-send again a ranking it already fetched since the page loaded, which only
-matters when the Journal was read by hand in that same session; `reload_game`
-is there for that, and costs a minute per profile.
 """
 from __future__ import annotations
 
@@ -45,17 +36,14 @@ from typing import Any, Dict, List, Optional, Tuple
 from config.schema import Field
 from config.settings import ProfileConfig
 from core.schedule import SCHEDULE_DAILY
-from core.session import SessionError
-from utils.cancel import cancellation
 from utils.logger import logger
 
 from ..base_module import BaseModule, ModuleAction
 from . import autosend, journal, mapper
 from .api import ApiError, SiteClient, normalize_site_url
-from .layout import DEFAULT_CARDS_PER_PAGE, REQUIRED_STEPS, STEPS, JournalLayout
+from .layout import DEFAULT_CARDS_PER_PAGE, STEPS, JournalLayout
+from .screen import JournalScreen
 from .store import SearchMemory, SentHistory, profile_cache_path
-from .titles import TitleReader
-from .traffic import TrafficListener
 
 # The version of the uploader this module carries, as the site records it.
 CLIENT_VERSION = "1.1.0"
@@ -69,34 +57,21 @@ class EventsModule(BaseModule):
                    "Modules); a profile without them is skipped.")
     default_schedule = SCHEDULE_DAILY
     default_day_start = "14:00"   # the game's day turns in the afternoon, not at midnight
-    # The Journal walk is long and runs a few times a day; on a Chrome left open
-    # for hours "Show details" stopped being found (17-19/10/2026).
-    fresh_browser = True
     steps = STEPS
-    required_steps = REQUIRED_STEPS
     settings = (
         Field("auto_publish", "bool", "Close complete rankings on the site", True,
               "When every player of a ranking has a name the site is asked to publish it right away. "
               "Otherwise, or with this off, it stays a draft for review on the site."),
         Field("days_back", "int", "Days to look back", 7,
-              "How many days of the Journal a search walks, by the age each card shows (\"yesterday\", "
-              "\"7 days ago\"). After a complete search only the days since it are walked again.",
+              "How many days of the Journal a search walks. After a complete search only the days since "
+              "it are walked again.",
               minimum=1, maximum=365),
-        Field("reload_game", "bool", "Reload the game before searching", False,
-              "Off: the search starts at once, on the game as it is. Turn on only if rankings come "
-              "back without an answer: the game does not send again one it already fetched since "
-              "the page loaded."),
-        Field("reload_wait", "float", "Wait after reloading (s)", 60.0,
-              "Only with the reload on: time the game takes to open again.", minimum=10.0, maximum=600.0),
         Field("cards_per_page", "int", "Cards per Journal page", DEFAULT_CARDS_PER_PAGE,
-              "How many cards one page of the Journal shows. Only the first two are calibrated; "
-              "the others are placed by the distance between them.", minimum=1, maximum=12),
-        Field("max_pages", "int", "Journal pages limit", 200,
-              "A safety limit: a search stops by itself when it reaches tournaments an earlier "
-              "search has already covered.", minimum=1, maximum=1000),
-        Field("title_language", "str", "Tesseract language for titles", "eng",
-              "Language model used to read the card titles. Falls back to the OCR section's "
-              "language when this one is not installed."),
+              "How many cards one page of the Journal shows. It says on which page a card is when the "
+              "new tournament has to be pictured.", minimum=1, maximum=12),
+        Field("max_pages", "int", "Journal requests limit", 200,
+              "A safety limit, of 50 entries per request: a search stops by itself when it reaches "
+              "tournaments an earlier search has already covered.", minimum=1, maximum=1000),
     )
     profile_fields = (
         Field("site_url", "str", "Clan site address", "",
@@ -162,44 +137,13 @@ class EventsModule(BaseModule):
         return {"success": False, "retry": retry, "profile": profile.name,
                 "account": profile.account_name, "reason": reason}
 
-    def _reload_game(self, profile: ProfileConfig):
-        """
-        Reloads the page and makes sure the game came back on the same profile.
-
-        The check is not a formality: the ranking read next goes to this
-        profile's clan site, and a game that reopened on another city would
-        send one clan's results to another clan's site.
-        """
-        wait = max(10.0, float(self.options.get("reload_wait", 60.0)))
-        logger.info(f"Reloading the game and waiting {wait:.0f}s for it to open again...")
-        self.browser.reload(wait=True)
-        cancellation.sleep(wait)
-        self.browser.refresh_dpr()
-        self.game_state.prepare_board()
-
-        siblings = self.config.profile_names(profile.account_name)
-        if not self.ctx.profiles.is_active(profile.name, siblings):
-            raise SessionError(
-                f"after reloading, the game is not on profile '{profile.name}' "
-                f"(reads '{self.ctx.profiles.active_profile_name()}')"
-            )
-
     def run_for_profile(self, profile: ProfileConfig) -> Dict[str, Any]:
         site, token = self.site_of(profile)
         if not (site and token):
             return self._failure(profile, "no clan site address and token configured for this profile")
 
-        layout = JournalLayout(self.calibration, int(self.options.get("cards_per_page", DEFAULT_CARDS_PER_PAGE)))
-        missing = layout.missing_steps()
-        if missing:
-            return self._failure(profile, "Journal not calibrated: " + self.calibration.titles(missing))
-
-        reader = TitleReader(self.ocr, str(self.options.get("title_language") or "eng"))
-        if not reader.available():
-            return self._failure(profile, reader.error)
-
-        # Asked before anything is clicked: with a token the site refuses, the
-        # whole walk through the Journal would end in rankings nobody accepts.
+        # Asked first: with a token the site refuses, the whole walk through the
+        # Journal would end in rankings nobody accepts.
         client = SiteClient(site, token, CLIENT_VERSION)
         try:
             client.me()
@@ -208,20 +152,16 @@ class EventsModule(BaseModule):
 
         logger.info(f"[{profile.label}] Searching the Journal for tournaments to send to {site}")
         collector = journal.JournalCollector(journal.ProfileCache(profile_cache_path()))
-        listener = TrafficListener(
-            host=self.browser.host, port=self.browser.port, tab_id=self.browser.tab_id,
-            url_filter=self.browser.url_filter, on_record=collector.feed_record,
-            on_status=lambda text: logger.warning(f"Traffic: {text}"),
-        )
-        if not listener.start():
-            return self._failure(profile, "could not listen to the game's traffic", retry=True)
+        # Here and not at the top: the feed builds on the chests' link, which imports this package.
+        from .feed import JournalFeed
+
+        feed = JournalFeed(host=self.browser.host, port=self.browser.port, tab_id=self.browser.tab_id,
+                           url_filter=self.browser.url_filter,
+                           on_status=lambda text: logger.warning(f"Game link: {text}"))
+        if not feed.start():
+            return self._failure(profile, "could not talk to the game", retry=True)
 
         try:
-            cancellation.sleep(1.5)   # the listener needs a moment to attach before anything is clicked
-            reloaded = bool(self.options.get("reload_game", False))
-            if reloaded:
-                self._reload_game(profile)
-
             known: Dict[str, dict] = {}
             try:
                 known = {f"{k['game_type']}|{k.get('ranking') or ''}": k for k in client.known_tournaments()}
@@ -231,6 +171,10 @@ class EventsModule(BaseModule):
             def catalogue_name(t: journal.Tournament) -> str:
                 entry = known.get(f"{(t.tournament_key or '').split(':')[0]}|{t.ranking or ''}")
                 return entry["name"] if entry and entry.get("name") else ""
+
+            def has_picture(t: journal.Tournament) -> bool:
+                entry = known.get(f"{(t.tournament_key or '').split(':')[0]}|{t.ranking or ''}")
+                return bool(entry and entry.get("has_picture"))
 
             history = SentHistory(site)
             memory = SearchMemory(site)
@@ -243,32 +187,23 @@ class EventsModule(BaseModule):
             elif last is not None:
                 logger.info(f"Last complete search on {last:%d/%m/%Y %H:%M}: walking back {days} day(s) "
                             f"of the {days_back} configured.")
-            options = mapper.MapperOptions(
-                max_pages=max(1, int(self.options.get("max_pages", 200))),
-                open_journal=True, reopen_known=True, max_age_days=days,
-                # Right after a reload the Journal may not open at the first click.
-                journal_retries=3 if reloaded else 1,
-            )
+            cards_per_page = int(self.options.get("cards_per_page", DEFAULT_CARDS_PER_PAGE))
+            options = mapper.MapperOptions(max_pages=max(1, int(self.options.get("max_pages", 200))),
+                                           cards_per_page=cards_per_page, max_age_days=days)
+            screen = JournalScreen(self.ctx, JournalLayout(self.calibration, cards_per_page))
             search = autosend.AutoSearch(
-                self.browser, layout, reader, collector, client, options,
+                feed, screen.picture, collector, client, options,
                 local_info=history.info, mark_sent=history.mark, catalogue_name=catalogue_name,
+                has_picture=has_picture,
                 client_version=CLIENT_VERSION, auto_publish=bool(self.options.get("auto_publish", True)),
-                on_log=logger.info, vision=self.vision, use_site_cutoff=not afresh,
+                on_log=logger.info, use_site_cutoff=not afresh,
             )
             summary = search.run()
             if summary.complete:
                 memory.record(started, days_back)
-            if not reloaded and summary.unanswered:
-                logger.warning(f"{summary.unanswered} ranking(s) were not sent by the game, which keeps the ones "
-                               f"it already fetched since the page loaded. If this repeats, turn on "
-                               f"'Reload the game before searching' in the module's settings.")
         finally:
-            listener.stop()
+            feed.stop()
             collector.save_profiles()
-            try:
-                self.game_state.close_modals()   # leave the Journal closed for whatever runs next
-            except Exception as exc:  # noqa: BLE001 - the browser may be what failed
-                logger.debug(f"Closing the Journal: {exc}")
 
         logger.info(f"[{profile.label}] Tournament search: {summary.text}")
         result: Dict[str, Any] = {

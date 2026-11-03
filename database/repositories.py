@@ -3,7 +3,7 @@ Data access layer and repositories for Chests, Player Mappings, and Event Scores
 """
 
 from datetime import datetime
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Optional, List, Dict, Any, Set, Tuple
 from mysql.connector import MySQLConnection, Error
 from utils.logger import logger
 
@@ -24,7 +24,7 @@ class ChestRepository:
 
     def get_player_name_mapping(self, ocr_player_name: str) -> str:
         """
-        Checks if an OCR player name is mapped to a canonical player name.
+        Checks if a player name is mapped to a canonical player name.
         Returns mapped name if found, else original name.
         """
         cursor = self.connection.cursor()
@@ -128,8 +128,7 @@ class ChestRepository:
 
         It needs the table that names the chest types and the columns that keep
         each gift's id - without the id a chest written twice cannot be told
-        from two chests. An older site has neither, and the collector reads the
-        screen there as it always did.
+        from two chests. An older site has neither, and has to be updated first.
         """
         return self.has_column("game_chest_types", "game_type_id") and self.has_game_columns("collected_chests")
 
@@ -150,7 +149,16 @@ class ChestRepository:
             cursor.execute(
                 "SELECT t.game_type_id, t.name, COALESCE(s.source, t.source) FROM game_chest_types t "
                 "LEFT JOIN standard_chests s ON s.id = t.standard_chest_id")
-            return {int(type_id): (name, source) for type_id, name, source in cursor.fetchall()}
+            types = {int(type_id): (name, source) for type_id, name, source in cursor.fetchall()}
+            # What the chests already written call a type the table does not name,
+            # when they all call it the same: a chest someone named by hand names
+            # the type for the chests after it.
+            cursor.execute(
+                "SELECT game_type_id, MIN(name), MIN(source) FROM collected_chests "
+                "WHERE game_type_id IS NOT NULL GROUP BY game_type_id HAVING COUNT(DISTINCT name, source) = 1")
+            for type_id, name, source in cursor.fetchall():
+                types.setdefault(int(type_id), (name, source))
+            return types
         except Error as exc:
             logger.debug(f"Could not read game_chest_types: {exc}")
             self.connection.rollback()
@@ -172,6 +180,21 @@ class ChestRepository:
             logger.error(f"Could not write chest type {type_id} to game_chest_types: {exc}")
             self.connection.rollback()
             return False
+        finally:
+            cursor.close()
+
+    def types_in_review(self) -> Set[int]:
+        """The chest types with a picture waiting in the review queue: no other is needed for them."""
+        if not self.has_column("incomplete_chests", "game_type_id"):
+            return set()
+        cursor = self.connection.cursor()
+        try:
+            cursor.execute("SELECT DISTINCT game_type_id FROM incomplete_chests "
+                           "WHERE status = 'pending' AND game_type_id IS NOT NULL AND screenshot IS NOT NULL")
+            return {int(type_id) for type_id, in cursor.fetchall()}
+        except Error as exc:
+            logger.debug(f"Could not read the chest types in review: {exc}")
+            return set()
         finally:
             cursor.close()
 
@@ -232,8 +255,8 @@ class ChestRepository:
         """
         Files a chest that could not be read, with the picture of it.
 
-        The picture is the point: a person can read what the OCR could not and
-        finish the record by hand, from the web interface. Without it the row
+        The picture is the point: a person can read it and finish the record by
+        hand, from the web interface. Without it the row
         says only that something was missed, and the chest itself is already
         gone from the game.
 

@@ -11,10 +11,14 @@ through CDP, which changes three things that mattered:
 * coordinates are CSS pixels of the page, not of the monitor - so the window can
   be moved, and another window can be on top, without breaking anything;
 * screenshots come from `Page.captureScreenshot`, which renders a region at any
-  scale we ask for. A name read at scale 3 is rendered three times larger by the
-  browser itself, with no interpolation - which is most of the OCR improvement;
-* logging in is a form on a web page, so accounts can be switched by clearing
-  the session instead of hunting for a menu inside the game.
+  scale we ask for, rendered by the browser itself with no interpolation;
+* logging in is a form on a web page.
+
+One Browser is one account's window: a debugging port and the folder that keeps
+the session the game verified. A port says nothing about who is behind it - any
+other program's Chrome can be listening there - so a window is only used, or
+closed, after its command line shows it is on our folder (`check_owner`). The
+wrong window would mean another account's chests in this one's database.
 
 Everything here speaks CSS pixels relative to the top-left of the viewport.
 """
@@ -22,6 +26,7 @@ Everything here speaks CSS pixels relative to the top-left of the viewport.
 import base64
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -44,6 +49,7 @@ try:
 except ImportError:  # pragma: no cover
     websocket = None
 
+from config.settings import same_folder
 from utils.logger import logger
 
 CHROME_PATHS = [
@@ -68,6 +74,20 @@ KEY_CODES = {
 
 class BrowserError(RuntimeError):
     pass
+
+
+class WrongWindow(BrowserError):
+    """The port or the folder belongs to another Chrome. Restarting would close somebody else's window."""
+
+
+def command_line_folder(command_line: str) -> str:
+    """The --user-data-dir of a Chrome command line, whichever way it was quoted; '' when it has none."""
+    match = re.search(r'--user-data-dir=(?:"([^"]+)"|(.+?)(?=\s+"?--|\s+https?:|"|\s*$))', command_line)
+    return (match.group(1) or match.group(2)) if match else ""
+
+
+def on_port(command_line: str, port: int) -> bool:
+    return re.search(rf"--remote-debugging-port={port}(?!\d)", command_line) is not None
 
 
 # Against Chrome throttling a window it considers covered or unseen. A
@@ -184,7 +204,10 @@ class Browser:
         found the same frozen Chrome and attached to it again. One that does not
         answer is closed and launched fresh.
         """
-        if self.reuse_existing and self.is_cdp_ready():
+        if self.is_cdp_ready():
+            self.check_owner()
+            if not self.reuse_existing:
+                return self.restart()
             logger.info(f"Reusing the browser already listening on CDP port {self.port}.")
             missing = self.missing_launch_flags()
             if missing:
@@ -202,6 +225,7 @@ class Browser:
             logger.warning("The browser that was already open is not responding; restarting it.")
             return self.restart()
 
+        self.check_folder_free()
         self.launch()
         if not self.connect():
             raise BrowserError("Could not connect to the game tab via CDP.")
@@ -214,28 +238,75 @@ class Browser:
         Empty when they are all there, and also when the command line cannot be
         read (not Windows, no access): a browser is only restarted on evidence.
         """
-        if os.name != "nt":
+        ours = [line for line in self._browser_processes() or [] if on_port(line, self.port)]
+        if not ours:
             return []
-        port = f"--remote-debugging-port={self.port}"
+        return [flag for flag in THROTTLING_FLAGS if flag not in ours[0]]
+
+    def _browser_processes(self) -> Optional[List[str]]:
+        """The command line of every Chrome started with a folder of its own; None when they cannot be read."""
+        if os.name != "nt":
+            return None
         script = (
+            "[Console]::OutputEncoding = [Text.Encoding]::UTF8; "
             "Get-CimInstance Win32_Process | "
-            f"Where-Object {{ $_.CommandLine -and $_.CommandLine.Contains('{port}') "
+            "Where-Object { $_.CommandLine -and $_.CommandLine.Contains('--user-data-dir=') "
             "-and -not $_.CommandLine.Contains('--type=') } | "
-            "Select-Object -First 1 -ExpandProperty CommandLine"
+            "ForEach-Object { $_.CommandLine }"
         )
         try:
             result = subprocess.run(
                 ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True, encoding="utf-8", errors="replace", timeout=30,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
         except Exception as exc:
-            logger.debug(f"Reading the browser's command line: {exc}")
-            return []
-        command_line = (result.stdout or "").strip()
-        if not command_line:
-            return []
-        return [flag for flag in THROTTLING_FLAGS if flag not in command_line]
+            logger.debug(f"Reading the browsers' command lines: {exc}")
+            return None
+        return (result.stdout or "").splitlines() if result.returncode == 0 else None
+
+    def check_owner(self):
+        """Raises WrongWindow unless the Chrome on our port is on our folder. Not knowing counts as no."""
+        if os.name != "nt":
+            return
+        lines = self._browser_processes()
+        if lines is None:
+            raise WrongWindow(f"Could not confirm whose Chrome is on port {self.port}, so it was not used.")
+        ours = [line for line in lines if on_port(line, self.port)]
+        folder = command_line_folder(ours[0]) if ours else ""
+        if not folder or not same_folder(folder, self.user_data_dir):
+            raise WrongWindow(
+                f"Port {self.port} is taken by another Chrome (folder: {folder or 'unknown'}), not by "
+                f"{self.user_data_dir}. It was not used nor closed. Change this account's port in "
+                f"Accounts and profiles, or close that window."
+            )
+
+    def check_folder_free(self):
+        """
+        Raises WrongWindow when our folder is already open.
+
+        Chrome hands a second start on the same folder to the window already open:
+        no new window, and the port never answers.
+        """
+        for line in self._browser_processes() or []:
+            folder = command_line_folder(line)
+            if folder and same_folder(folder, self.user_data_dir):
+                raise WrongWindow(
+                    f"The Chrome folder {self.user_data_dir} is already open in a window that does not "
+                    f"answer on port {self.port}. Close that window, or give this account another folder."
+                )
+
+    def open_for_person(self):
+        """Opens the account's window and leaves it to whoever is at the keyboard (the code by e-mail)."""
+        if self.is_cdp_ready():
+            self.check_owner()
+            tab = self.find_game_tab()
+            if tab:
+                self.tab_id = tab.get("id")
+                self.focus_tab()
+            return
+        self.check_folder_free()
+        self.launch()
 
     def is_responsive(self, timeout: float = 10.0) -> bool:
         """True when the game tab still runs JavaScript and still renders a frame."""
@@ -261,6 +332,8 @@ class Browser:
         stronger: a new browser process also clears a hung renderer that a
         reload would not reach.
         """
+        if self.is_cdp_ready():
+            self.check_owner()
         logger.info("Restarting the browser...")
         self.kill()
         time.sleep(1.5)
@@ -317,12 +390,12 @@ class Browser:
         """Force-kills every process whose command line names our profile folder."""
         if os.name != "nt":
             return
-        # The same spelling launch() put on the command line.
-        folder = f"--user-data-dir={self.user_data_dir}".replace("'", "''")
+        # The whole folder: 'Account' must not take 'Account2's window with it.
+        folder = self.user_data_dir.replace("'", "''")
         script = (
-            f"$d = '{folder}'; "
+            f"$d = '--user-data-dir=\"?' + [regex]::Escape('{folder}') + '(\"|\\s+\"?--|\\s+http|\\s*$)'; "
             "Get-CimInstance Win32_Process | "
-            "Where-Object { $_.CommandLine -and $_.CommandLine.Contains($d) } | "
+            "Where-Object { $_.CommandLine -and $_.CommandLine -match $d } | "
             "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"
         )
         try:
@@ -333,35 +406,6 @@ class Browser:
             )
         except Exception as exc:
             logger.debug(f"Killing browser processes: {exc}")
-
-    def switch_profile(self, user_data_dir: str) -> bool:
-        """
-        Restarts the browser on another profile folder.
-
-        Each account keeps its own logged-in session in its own folder, which is
-        how accounts are switched now that clearing cookies is off the table -
-        it would cost an e-mail verification code every time.
-        """
-        if os.path.normcase(os.path.abspath(user_data_dir)) == os.path.normcase(
-            os.path.abspath(self.user_data_dir)
-        ):
-            return True
-
-        if not self._launched_by_us and self.is_cdp_ready():
-            logger.warning(
-                "The browser was already open when execution started, so its profile cannot be switched. "
-                "Close the collector's Chrome or disable 'Reuse open browser'."
-            )
-            return False
-
-        logger.info(f"Switching browser profile to {user_data_dir}")
-        self.close()
-        self.user_data_dir = user_data_dir
-        self._launched_by_us = False
-        self._process = None
-        self.reuse_existing = False      # a porta pode demorar a liberar; nunca reaproveitar aqui
-        time.sleep(1.5)
-        return self.start()
 
     # -------------------------------------------------------------- tab / link
 
@@ -574,31 +618,6 @@ class Browser:
             time.sleep(interval)
         return False
 
-    def clear_session(self):
-        """
-        Logs the current account out by erasing everything that remembers it.
-
-        There is no reliable 'log out' button to hunt for inside the game, and a
-        leftover session is what would make the next account silently collect
-        into the previous account's database.
-        """
-        logger.info("Clearing browser session (cookies and storage)...")
-        for method, params in (
-            ("Network.clearBrowserCookies", None),
-            ("Network.clearBrowserCache", None),
-        ):
-            try:
-                self.send(method, params)
-            except BrowserError as exc:
-                logger.debug(f"{method}: {exc}")
-
-        origin = self.evaluate("location.origin") or self.game_url
-        try:
-            self.send("Storage.clearDataForOrigin", {"origin": origin, "storageTypes": "all"})
-        except BrowserError as exc:
-            logger.debug(f"Storage.clearDataForOrigin: {exc}")
-        self.evaluate("(()=>{try{localStorage.clear();sessionStorage.clear();}catch(e){}return 1})()")
-
     # ------------------------------------------------------------------ input
 
     def viewport(self) -> Tuple[int, int]:
@@ -690,10 +709,7 @@ class Browser:
         Turns the wheel over (x, y).
 
         The sign is the wheel's own, not the content's: **positive scrolls DOWN**,
-        the way pushing the wheel away from you reveals what is below. Reading it
-        the other way round is what made the profile list scroll to the bottom
-        when the code meant to send it to the top, so the sign is spelled out
-        here and the callers say `scroll_to_top` when that is what they mean.
+        the way pushing the wheel away from you reveals what is below.
         """
         self.move(x, y)
         time.sleep(0.03)
@@ -703,14 +719,6 @@ class Browser:
                 "deltaX": 0, "deltaY": int(delta_y), "button": "none", "buttons": 0,
             })
             time.sleep(delay)
-
-    def scroll_to_top(self, x: float, y: float, repetitions: int = 6):
-        """Sends whatever is under (x, y) back to its first item."""
-        self.scroll(x, y, delta_y=-600, repetitions=repetitions)
-
-    def scroll_down(self, x: float, y: float, repetitions: int = 5):
-        """Advances one screenful or so down the list under (x, y)."""
-        self.scroll(x, y, delta_y=600, repetitions=repetitions)
 
     def press_key(self, name: str, delay: float = 0.1):
         code, key = KEY_CODES.get(name, (0, name))
@@ -770,7 +778,7 @@ class Browser:
 
         `region` is (left, top, width, height) in CSS pixels. `scale` asks the
         browser to RENDER that region larger instead of resizing a small capture
-        afterwards - the pixels are real, which is exactly what OCR needs.
+        afterwards - the pixels are real.
         """
         if cv2 is None:
             raise BrowserError("dependency 'opencv-python' is not installed (run install.bat)")

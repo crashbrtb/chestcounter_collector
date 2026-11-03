@@ -5,7 +5,7 @@ REM ============================================================================
 REM
 REM  This is the only file Windows Task Scheduler needs to call.
 REM  It does not hold any configuration: everything (which modules run and when,
-REM  accounts, profiles, timings, browser, OCR, log level and retention) is in
+REM  accounts, profiles, timings, browser, log level and retention) is in
 REM  config\config.json and is edited via the graphical interface -- run.bat config
 REM
 REM  Logging is NOT redirected from here. Python writes directly to

@@ -1,1 +1,1 @@
-"""Services every module shares: the browser, OCR, image search, calibration, session, and the run."""
+"""Services every module shares: the browser, image search, calibration, session, and the run."""

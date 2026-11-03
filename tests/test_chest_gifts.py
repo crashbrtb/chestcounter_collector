@@ -1,23 +1,27 @@
-"""The clan gifts read from the game's traffic, and a tab collected from them.
+"""The clan gifts as the game lists them, the requests that reach it, and a clan collected through them.
 
-The packets are built by hand in the shapes found on the recording of
-11/10/2026; the game itself is a small stand-in that opens a chest per click
-and answers the way the real one does.
+The packets are built by hand in the shapes measured on the real game; the game
+itself is a small stand-in that answers the way the real one does.
 """
 import base64
 import time
 import unittest
 from unittest import mock
 
-from modules.chests import from_game
+from modules.chests import from_game, game_link
 from modules.chests.from_game import GameCollection
-from modules.chests.gifts import (CLAN_ROUTE, GIFT_EVENT, GIFT_LIFETIME_SECONDS, OPEN_ROUTE, Gift, GiftFeed,
-                                  chests_of, parse_clan_gifts, parse_gift_row)
+from modules.chests.game_link import GameLink, GameLinkError, build_request, parse_request, request_bytes
+from modules.chests.gifts import (CLAN_ROUTE, GIFT_LIFETIME_SECONDS, OPEN_ROUTE, Gift, parse_clan_gifts, parse_gift_row)
 from modules.events import tbcodec
 
 ANDRA, PIPO, KALEL = 901943467017, 489626671378, 4496830759598
+PLAYERS = {ANDRA: "AndraBianca", PIPO: "Pipolebon", KALEL: "KALEL"}
 BONE, SCORPION, BRIAREUS = 5512, 5782, 702062
 SOON = int(time.time()) + 17 * 3600
+GIFT_EVENT = 300020
+CLAN = 936302870583
+ME = 485331363759
+AUTH = [[ME], b"session-0001"]
 
 
 def row(gift_id, player=ANDRA, chest_type=BONE, quantity=1, expires=SOON, kind=1):
@@ -25,18 +29,23 @@ def row(gift_id, player=ANDRA, chest_type=BONE, quantity=1, expires=SOON, kind=1
 
 
 def clan_record(rows, members=True):
-    """The clan record as route 15000 sends it: with members when the window was just opened."""
+    """The clan record as route 15000 sends it: with members when asked for the gifts."""
     roster = [[[ANDRA], 3, 1790833148], [[PIPO], 5, 1790827946]] if members else []
-    node = [[936302870583], ["LPL", "LION PRIDE LEGION"], roster, [], {}, [], 100, 1, b"x", 2, b"y", 3, {}, rows, False]
+    node = [[CLAN], ["LPL", "LION PRIDE LEGION"], roster, [], {}, [], 100, 1, b"x", 2, b"y", 3, {}, rows, False]
     return [[node]]
-
-
-def record(*frames):
-    return {"kind": "RESP", "b64": base64.b64encode(b"".join(frames)).decode("ascii")}
 
 
 def gift_event(*rows):
     return ([b"session-0001", 181738, 1791734216, GIFT_EVENT], list(rows))
+
+
+def linked(answer):
+    """A GameLink that has seen the game's requests and gets `answer` to whatever it sends."""
+    link = GameLink()
+    link._learn("https://game/rubens-realm", build_request(318, 40, AUTH, [], b"cursors"))
+    link.sent = []
+    link._fetch = lambda body, timeout: link.sent.append(body) or answer
+    return link
 
 
 class TailEvents(unittest.TestCase):
@@ -63,41 +72,72 @@ class Parsing(unittest.TestCase):
         self.assertIsNone(parse_gift_row([32001, KALEL, BRIAREUS, SOON, 3, 1]))
         self.assertIsNone(parse_gift_row(row(32001)[:5]))
 
-    def test_the_record_repeated_while_the_window_is_open_is_not_an_empty_list(self):
+    def test_a_record_without_members_is_not_an_empty_list(self):
         self.assertIsNone(parse_clan_gifts(clan_record([], members=False)[0][0]))
         self.assertEqual([], parse_clan_gifts(clan_record([])[0][0]))
         self.assertEqual([31956, 31957], [g.gift_id for g in parse_clan_gifts(clan_record([row(31957), row(31956)])[0][0])])
 
-    def test_a_gift_of_several_chests_is_that_many_lines(self):
-        gifts = [parse_gift_row(row(1)), parse_gift_row(row(2, quantity=3))]
-        self.assertEqual([1, 2, 2, 2], [gift.gift_id for gift in chests_of(gifts)])
 
+class Requests(unittest.TestCase):
+    def test_a_request_is_built_the_way_the_game_builds_it(self):
+        data = build_request(OPEN_ROUTE, 1336, AUTH, [{123596: 1}], b"cursors")
 
-class Feed(unittest.TestCase):
-    def test_list_arrivals_and_answers(self):
-        feed = GiftFeed()
-        feed.feed_record(record(tbcodec.build_frame(CLAN_ROUTE, 1, clan_record([row(10), row(11, quantity=2)]))))
-        self.assertEqual((1, 0), feed.state())
+        self.assertEqual((OPEN_ROUTE, 1336, AUTH, b"cursors"), parse_request(data))
+        unpacker = tbcodec.LEUnpacker(data, 8)
+        unpacker.read()
+        self.assertEqual({"123596": 1}, unpacker.read()[0])
 
-        # The repeated record changes nothing; a gift arrives on the tail of an unrelated answer.
-        feed.feed_record(record(tbcodec.build_frame(CLAN_ROUTE, 2, clan_record([], members=False))))
-        feed.feed_record(record(tbcodec.build_frame(318, 3, [0], tail_events=(gift_event(row(12, PIPO, SCORPION)),))))
-        feed.feed_record(record(tbcodec.build_frame(OPEN_ROUTE, 4, [[{"1117": 1}]]),
-                                tbcodec.build_frame(OPEN_ROUTE, 5, [[{"515": 1}]])))
+    def test_chrome_reports_the_body_in_either_form(self):
+        data = build_request(318, 7, AUTH, [], b"cursors")
+        self.assertEqual(7, request_bytes(data)[1])
+        self.assertEqual(7, request_bytes(base64.b64encode(data))[1])
+        self.assertIsNone(request_bytes(b"not a request"))
 
-        self.assertEqual((1, 2), feed.state())
-        self.assertEqual([10, 11, 12], [gift.gift_id for gift in feed.snapshot()])
+    def test_what_is_learned_from_the_game_is_what_goes_out(self):
+        link = linked(tbcodec.build_frame(OPEN_ROUTE, 45, [[{"1071": 1}]]))
+        # A batch moves the count on and has no tail of its own to take.
+        link._learn("https://game/rubens-realm", build_request(2, 44, AUTH, [], b""))
 
-        # A new list replaces what was known and starts the count again.
-        feed.feed_record(record(tbcodec.build_frame(CLAN_ROUTE, 6, clan_record([row(12, PIPO, SCORPION)]))))
-        self.assertEqual((2, 0), feed.state())
-        self.assertEqual([12], [gift.gift_id for gift in feed.snapshot()])
+        self.assertTrue(link.learned.is_set())
+        self.assertEqual(ME, link.player_id)
+        link.open_gift(Gift(123593, 1, 2, 3, quantity=4))
 
-    def test_what_is_not_an_answer_of_the_game_is_ignored(self):
-        feed = GiftFeed()
-        self.assertFalse(feed.feed_record({"kind": "WS_IN", "b64": "AAAA"}))
-        self.assertFalse(feed.feed_record({"kind": "RESP", "b64": "not base64"}))
-        self.assertEqual((0, 0), feed.state())
+        self.assertEqual((OPEN_ROUTE, 45, AUTH, b"cursors"), parse_request(link.sent[0]))
+        self.assertIn(tbcodec.pack({123593: 4}), link.sent[0])
+
+    def test_a_refusal_is_an_error_and_does_not_show_the_session(self):
+        link = linked(tbcodec.build_frame(game_link.REFUSED_ROUTE, 0, [-2, "no"]))
+        with self.assertRaises(GameLinkError) as caught:
+            link.call(OPEN_ROUTE, [{1: 1}])
+        self.assertNotIn("session", str(caught.exception))
+
+    def test_an_answer_to_something_else_is_not_an_answer(self):
+        with self.assertRaises(GameLinkError):
+            linked(tbcodec.build_frame(318, 2, [0])).call(OPEN_ROUTE, [{1: 1}])
+
+    def test_the_clan_comes_from_the_players_own_profile(self):
+        mine = [[ME], "tb:1", "Crash", "BR", 3, 0, 0, 25, 45, 14, 100, [CLAN]]
+        link = linked(tbcodec.build_frame(402, 2, [[mine]]))
+        self.assertEqual(CLAN, link.clan_id())
+        self.assertIn(tbcodec.pack([[[ME]]]), link.sent[0])
+
+    def test_names_are_asked_a_clan_at_a_time(self):
+        profile = [[ANDRA], "tb:1", "AndraBianca", "BR", 3, 0, 0, 25, 45, 14, 100, [CLAN]]
+        link = linked(tbcodec.build_frame(402, 2, [[profile]]))
+
+        self.assertEqual({ANDRA: "AndraBianca"}, link.player_names(list(range(250))))
+
+        self.assertEqual(3, len(link.sent))
+
+    def test_the_list_comes_from_the_clan_record(self):
+        link = linked(tbcodec.build_frame(CLAN_ROUTE, 2, clan_record([row(11), row(10)])))
+        self.assertEqual([10, 11], [gift.gift_id for gift in link.gifts(CLAN)])
+        self.assertIn(tbcodec.pack([[[[CLAN], 58]]]), link.sent[0])
+
+    def test_a_list_that_did_not_come_is_an_error(self):
+        link = linked(tbcodec.build_frame(CLAN_ROUTE, 2, clan_record([], members=False)))
+        with self.assertRaises(GameLinkError):
+            link.gifts(CLAN)
 
 
 # ----------------------------------------------------------------- the stand-ins
@@ -110,9 +150,11 @@ class Repo:
                                                                  KALEL: "KALEL"})
         self.rows = {}            # row id -> (name, player, source, generated_at, gift id)
         self.incomplete = []
+        self.in_review = set()
         self.learned = {}
         self.existing = dict(existing or {})
         self.last_id = None
+        self.refuse = False
         self._next = 100
 
     def chest_types(self):
@@ -131,18 +173,20 @@ class Repo:
         return counts
 
     def insert_chest(self, name, player, source, collected_at=None, game=None):
+        if self.refuse:
+            return False
         self._next += 1
         self.last_id = self._next
         self.rows[self._next] = (name, player, source, collected_at, game["game_gift_id"])
         return True
 
     def insert_incomplete_chest(self, name, player, source, screenshot=None, collected_at=None, game=None):
-        self.incomplete.append({"name": name, "player": player, "source": source, "gift": game["game_gift_id"]})
+        self.incomplete.append({"name": name, "player": player, "source": source, "gift": game["game_gift_id"],
+                                "type": game["game_type_id"], "picture": screenshot})
         return True
 
-    def learn_chest_type(self, type_id, name, source):
-        self.learned[type_id] = (name, source)
-        return True
+    def types_in_review(self):
+        return set(self.in_review)
 
     def delete_chest(self, row_id):
         return self.rows.pop(row_id, None) is not None
@@ -152,304 +196,264 @@ class Repo:
 
 
 class Game:
-    """The game: a list of gifts, a panel showing four of their chests, an answer per chest opened."""
+    """The game as GameLink shows it: a list of gifts, and gifts opened on request."""
 
-    def __init__(self, rows, hidden=()):
-        self.feed = GiftFeed()
-        self.waiting = [parse_gift_row(r) for r in rows]
-        self.hidden = set(hidden)          # gifts the panel does not show until the window is reopened
-        self.answers = True
-        self.sends_list = True
-        self.reopened = 0
-        self.reading = None                # rows the screen shows for every chest, when it is read
-        self.minutes_left = None
-        self._send_list()
+    def __init__(self, rows):
+        self.waiting = {gift.gift_id: gift for gift in map(parse_gift_row, rows)}
+        self.opened = []
+        self.refused = set()         # gifts refused and left in place
+        self.lost = set()            # gifts opened whose answer never came
+        self.arrivals = []           # rows that appear after the next gift is opened
+        self.lists_left = None       # how many more lists it answers
+        self.names = {}              # the players it knows beyond the site's member list
+        self.pictures = []           # the places of the list the panel was pictured at
+        self.camera = lambda position: b"png"
+        self.log = []
 
-    def _send_list(self):
-        with self.feed.lock:
-            self.feed.gifts = {gift.gift_id: gift for gift in self.waiting}
-            self.feed.lists += 1
-            self.feed.opened = 0
+    def player_names(self, player_ids):
+        return {player: self.names[player] for player in player_ids if player in self.names}
 
-    def panel(self):
-        return [gift for gift in chests_of(self.waiting) if gift.gift_id not in self.hidden]
+    def take_picture(self, position):
+        self.pictures.append(position)
+        return self.camera(position)
 
-    def arrive(self, gift_row, hidden=False):
-        gift = parse_gift_row(gift_row)
-        self.waiting.append(gift)
-        if hidden:
-            self.hidden.add(gift.gift_id)
-        with self.feed.lock:
-            self.feed.gifts[gift.gift_id] = gift
+    def gifts(self, _clan_id):
+        if self.lists_left is not None:
+            if self.lists_left == 0:
+                raise GameLinkError("the game's server did not answer in time")
+            self.lists_left -= 1
+        return sorted(self.waiting.values(), key=lambda gift: gift.gift_id)
 
-    def open_first(self):
-        """A click on any 'Open' button of the panel: the chest under it is gone."""
-        panel = self.panel()
-        if not panel:
-            return
-        gift = panel[0]
-        index = self.waiting.index(gift)
-        if gift.quantity > 1:
-            self.waiting[index] = Gift(gift.gift_id, gift.player_id, gift.chest_type, gift.expires_at,
-                                       gift.quantity - 1, gift.kind)
-        else:
-            del self.waiting[index]
-        if self.answers:
-            with self.feed.lock:
-                self.feed.opened += 1
-
-    def reopen(self):
-        self.reopened += 1
-        self.hidden.clear()
-        if self.sends_list:
-            self._send_list()
-        return True
-
-
-class Module:
-    """What GameCollection asks of the chest module."""
-
-    profile_label = "Main / Alpha"
-    vocabulary = None
-
-    def __init__(self, game):
-        self.game = game
-        self.browser = self
-        self.config = self
-        self._crops = []
-        self._minutes_left = []
-        self.screen_reads = 0
-
-    def section(self, _name):
-        return {"chest_click_delay": 0}
-
-    def click(self, _x, _y, delay=0.0):
-        self.game.open_first()
-
-    def _visible_chests(self):
-        return [{"button": (0, 30 * slot, 10, 10)} for slot in range(min(4, len(self.game.panel())))]
-
-    def _look_again(self, _label):
-        return []
-
-    def _read_resolved(self, chests, _scale):
-        self.screen_reads += 1
-        self._crops = [None] * len(chests)
-        self._minutes_left = [self.game.minutes_left] * len(chests)
-        if isinstance(self.game.reading, dict):      # gift id -> what its line shows
-            return [list(self.game.reading.get(gift.gift_id, [])) for gift in self.game.panel()[:len(chests)]]
-        return [list(self.game.reading or []) for _ in chests]
-
-    @staticmethod
-    def _encode(_crop):
-        return None
+    def open_gift(self, gift):
+        if gift.gift_id in self.refused:
+            raise GameLinkError("refused")
+        del self.waiting[gift.gift_id]
+        self.opened.append(gift.gift_id)
+        for new in self.arrivals:
+            parsed = parse_gift_row(new)
+            self.waiting[parsed.gift_id] = parsed
+        self.arrivals = []
+        if gift.gift_id in self.lost:
+            raise GameLinkError("the game's server did not answer in time")
 
 
 class Collection(unittest.TestCase):
     def setUp(self):
-        for name in ("CONFIRM_WAIT", "SCREEN_SETTLE_WAIT"):
-            patcher = mock.patch.object(from_game, name, 0.05)
-            patcher.start()
-            self.addCleanup(patcher.stop)
+        patcher = mock.patch.object(from_game, "FAILURE_WAIT", 0)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def collect(self, game, repo):
-        module = Module(game)
-        collection = GameCollection(module, repo, game.feed, "Gifts", game.reopen, answer_wait=0.2)
-        return collection.run(), module
+        return GameCollection("Main / Alpha", repo, game, CLAN, 0, game.take_picture).run()
 
-    def test_every_chest_is_written_from_the_list_without_reading_the_screen(self):
-        game = Game([row(10), row(11, PIPO, SCORPION), row(12, KALEL, BRIAREUS, quantity=3), row(13), row(14)])
+    def test_every_gift_is_written_and_opened_oldest_first(self):
+        game = Game([row(10), row(11, PIPO, SCORPION), row(12, KALEL, BRIAREUS, quantity=3), row(13)])
         repo = Repo()
 
-        (collected, incomplete, finished), module = self.collect(game, repo)
+        self.assertEqual((6, 0, True), self.collect(game, repo))
 
-        self.assertEqual((7, 0, True), (collected, incomplete, finished))
-        self.assertEqual([10, 11, 12, 12, 12, 13, 14], repo.gifts_written())
-        self.assertEqual(0, module.screen_reads)
-        self.assertEqual([], game.waiting)
+        self.assertEqual([10, 11, 12, 12, 12, 13], repo.gifts_written())
+        self.assertEqual([10, 11, 12, 13], game.opened)
         briareus = [r for r in repo.rows.values() if r[4] == 12]
         self.assertEqual({("Briareus Chest", "KALEL", "Epic Briareus squad")}, {r[:3] for r in briareus})
         self.assertEqual(SOON - GIFT_LIFETIME_SECONDS, int(briareus[0][3].timestamp()))
 
-    def test_a_gift_the_panel_did_not_show_is_taken_back_and_collected_once_it_shows(self):
-        # Gift 11 is listed and not on the panel: it is written when it comes up in
-        # the list, another chest is opened in its place, and settling puts both right.
-        game = Game([row(10), row(11, PIPO, SCORPION), row(12), row(13), row(14), row(15)], hidden=[11])
+    def test_a_gift_is_written_before_it_is_opened(self):
+        game = Game([row(10)])
         repo = Repo()
+        seen = []
+        opening = game.open_gift
+        game.open_gift = lambda gift: (seen.append(repo.gifts_written()), opening(gift))
 
-        (collected, incomplete, finished), _module = self.collect(game, repo)
+        self.collect(game, repo)
 
-        self.assertEqual((6, 0, True), (collected, incomplete, finished))
-        self.assertEqual([10, 11, 12, 13, 14, 15], repo.gifts_written())
-        self.assertEqual([], game.waiting)
+        self.assertEqual([[10]], seen)
 
-    def test_a_gift_that_never_shows_is_left_for_the_next_run_and_not_written(self):
-        game = Game([row(10), row(11, PIPO, SCORPION), row(12)], hidden=[11])
-        game.reopen = lambda: (game._send_list(), True)[1]      # reopening does not bring it to the panel
+    def test_no_gifts_is_a_finished_run(self):
+        self.assertEqual((0, 0, True), self.collect(Game([]), Repo()))
 
-        (collected, _incomplete, finished), _module = self.collect(game, repo := Repo())
-
-        self.assertTrue(finished)
-        self.assertEqual(2, collected)
-        self.assertEqual([10, 12], repo.gifts_written())
-        self.assertEqual([11], [gift.gift_id for gift in game.waiting])
+    def test_requests_start_at_least_the_interval_apart(self):
+        game = Game([row(10), row(11), row(12)])
+        started = time.time()
+        GameCollection("Main / Alpha", Repo(), game, CLAN, 0.05, game.take_picture).run()
+        self.assertGreaterEqual(time.time() - started, 0.14)
 
     def test_a_gift_already_in_the_database_is_opened_and_not_written_again(self):
         game = Game([row(10), row(11, KALEL, BRIAREUS, quantity=2), row(12)])
         repo = Repo(existing={11: 2})
 
-        (collected, _incomplete, finished), _module = self.collect(game, repo)
+        self.assertEqual((2, 0, True), self.collect(game, repo))
 
-        self.assertEqual((2, True), (collected, finished))
         self.assertEqual([10, 12], repo.gifts_written())
-        self.assertEqual([], game.waiting)
+        self.assertEqual([10, 11, 12], game.opened)
 
     def test_a_gift_arriving_during_the_run_is_collected(self):
         game = Game([row(10), row(11)])
-        game.arrive(row(12, PIPO, SCORPION))
+        game.arrivals = [row(12, PIPO, SCORPION)]
+        repo = Repo()
 
-        (collected, _incomplete, _finished), _module = self.collect(game, repo := Repo())
+        self.assertEqual((3, 0, True), self.collect(game, repo))
 
-        self.assertEqual(3, collected)
         self.assertEqual([10, 11, 12], repo.gifts_written())
 
-    def test_a_new_chest_type_is_named_from_the_screen_once(self):
-        game = Game([row(10, chest_type=9999), row(11, chest_type=9999)])
-        game.reading = ["Mimic Chest", "From: AndraBianca", "Source: Mimic Chest"]
-        game.minutes_left = (SOON - int(time.time())) // 60
+    def test_an_expired_gift_is_neither_written_nor_opened(self):
+        game = Game([row(10, expires=int(time.time()) - 60), row(11)])
         repo = Repo()
 
-        (collected, incomplete, _finished), module = self.collect(game, repo)
+        self.assertEqual((1, 0, True), self.collect(game, repo))
 
-        self.assertEqual((2, 0), (collected, incomplete))
-        self.assertEqual({9999: ("Mimic Chest", "Mimic Chest")}, repo.learned)
-        self.assertEqual({("Mimic Chest", "AndraBianca", "Mimic Chest")}, {r[:3] for r in repo.rows.values()})
-        self.assertEqual(1, module.screen_reads)
+        self.assertEqual([11], game.opened)
+        self.assertEqual([11], repo.gifts_written())
 
-    def test_a_reading_whose_countdown_is_not_the_gifts_is_not_believed(self):
-        game = Game([row(10, chest_type=9999)])
-        game.reading = ["Bone Chest", "From: Someone", "Source: Level 25 Crypt"]
-        game.minutes_left = 5        # the gift has seventeen hours left
-        repo = Repo()
+    def test_a_gift_of_an_unknown_kind_is_left_in_the_game(self):
+        game = Game([row(10, kind=2), row(11)])
 
-        (collected, incomplete, _finished), _module = self.collect(game, repo)
+        self.assertEqual((1, 0, True), self.collect(game, Repo()))
 
-        self.assertEqual((0, 1), (collected, incomplete))
-        self.assertEqual({}, repo.learned)
-        self.assertEqual([{"name": "", "player": "AndraBianca", "source": "", "gift": 10}], repo.incomplete)
+        self.assertEqual([11], game.opened)
+        self.assertEqual([10], list(game.waiting))
 
-    def test_a_reading_with_the_gifts_countdown_and_another_players_name_is_not_believed(self):
-        # 12/10/2026: a Level 35 crypt chest from one player, read off the
-        # Fenrir chest another player got six seconds earlier - same minutes left.
-        game = Game([row(10, PIPO, chest_type=5784)])
-        game.reading = ["Fenrir's Chest", "From: AndraBianca", "Source: Epic Fenrir squad"]
-        game.minutes_left = (SOON - int(time.time())) // 60
-        repo = Repo()
-
-        (collected, incomplete, _finished), _module = self.collect(game, repo)
-
-        self.assertEqual((0, 1), (collected, incomplete))
-        self.assertEqual({}, repo.learned)
-        self.assertEqual([{"name": "", "player": "Pipolebon", "source": "", "gift": 10}], repo.incomplete)
-
-    def test_a_type_read_on_a_single_gift_names_its_chest_but_is_not_learned(self):
-        game = Game([row(10, chest_type=9999)])
-        game.reading = ["Mimic Chest", "From: AndraBianca", "Source: Mimic Chest"]
-        game.minutes_left = (SOON - int(time.time())) // 60
-        repo = Repo()
-
-        (collected, incomplete, _finished), _module = self.collect(game, repo)
-
-        self.assertEqual((1, 0), (collected, incomplete))
-        self.assertEqual({}, repo.learned)
-        self.assertEqual([("Mimic Chest", "AndraBianca", "Mimic Chest")], [r[:3] for r in repo.rows.values()])
-
-    def test_a_type_its_gifts_disagree_on_is_not_learned(self):
-        game = Game([row(10, chest_type=9999), row(11, PIPO, chest_type=9999), row(12, chest_type=9999)])
-        game.reading = {10: ["Mimic Chest", "From: AndraBianca", "Source: Mimic Chest"],
-                        11: ["Fenrir's Chest", "From: Pipolebon", "Source: Epic Fenrir squad"],
-                        12: ["Mimic Chest", "From: AndraBianca", "Source: Mimic Chest"]}
-        game.minutes_left = (SOON - int(time.time())) // 60
-        repo = Repo()
-
-        (collected, incomplete, _finished), _module = self.collect(game, repo)
-
-        self.assertEqual((3, 0), (collected, incomplete))
-        self.assertEqual({}, repo.learned)
-        self.assertEqual(["Mimic Chest", "Fenrir's Chest", "Mimic Chest"], [r[0] for r in repo.rows.values()])
-
-    def test_a_player_the_site_does_not_know_does_not_count_towards_naming_a_type(self):
-        game = Game([row(10, 777, chest_type=9999), row(11, 778, chest_type=9999)])
-        game.reading = ["Mimic Chest", "From: Newcomer", "Source: Mimic Chest"]
-        game.minutes_left = (SOON - int(time.time())) // 60
-        repo = Repo()
-
-        (collected, _incomplete, _finished), _module = self.collect(game, repo)
-
-        self.assertEqual(2, collected)
-        self.assertEqual({}, repo.learned)
-
-    def test_without_any_countdown_the_players_vouch_for_the_reading(self):
-        # A chest area calibrated around the text alone: no countdown is ever read.
-        game = Game([row(10, chest_type=9999), row(11, chest_type=9999)])
-        game.reading = ["Mimic Chest", "From: andrabianca", "Source: Mimic Chest"]
-        repo = Repo()
-
-        (collected, incomplete, _finished), _module = self.collect(game, repo)
-
-        self.assertEqual((2, 0), (collected, incomplete))
-        self.assertEqual({9999: ("Mimic Chest", "Mimic Chest")}, repo.learned)
-        self.assertEqual({("Mimic Chest", "AndraBianca", "Mimic Chest")}, {r[:3] for r in repo.rows.values()})
-
-    def test_without_any_countdown_another_players_line_is_not_believed(self):
-        game = Game([row(10, chest_type=9999)])
-        game.reading = ["Bone Chest", "From: Pipolebon", "Source: Level 25 Crypt"]
-        repo = Repo()
-
-        (collected, incomplete, _finished), _module = self.collect(game, repo)
-
-        self.assertEqual((0, 1), (collected, incomplete))
-        self.assertEqual({}, repo.learned)
-
-    def test_without_any_countdown_an_unknown_player_is_not_read_from_the_screen(self):
+    def test_a_player_the_site_does_not_know_is_named_by_the_game(self):
         game = Game([row(10, player=777)])
-        game.reading = ["Bone Chest", "From: Newcomer", "Source: Level 25 Crypt"]
+        game.names = {777: "Newcomer"}
         repo = Repo()
 
-        (collected, incomplete, _finished), _module = self.collect(game, repo)
+        self.assertEqual((1, 0, True), self.collect(game, repo))
 
-        self.assertEqual((0, 1), (collected, incomplete))
-        self.assertEqual([{"name": "Bone Chest", "player": "", "source": "Level 25 Crypt", "gift": 10}],
-                         repo.incomplete)
-
-    def test_a_player_the_site_does_not_know_is_read_from_the_screen(self):
-        game = Game([row(10, player=777)])
-        game.reading = ["Bone Chest", "From: Newcomer", "Source: Level 25 Crypt"]
-        game.minutes_left = (SOON - int(time.time())) // 60
-
-        (collected, _incomplete, _finished), _module = self.collect(game, repo := Repo())
-
-        self.assertEqual(1, collected)
         self.assertEqual([("Bone Chest", "Newcomer", "Level 25 Crypt")], [r[:3] for r in repo.rows.values()])
 
-    def test_without_the_list_again_the_screen_takes_over(self):
-        game = Game([row(10), row(11)])
-        game.sends_list = False
+    def test_a_new_type_is_pictured_after_the_known_ones_and_goes_to_the_queue(self):
+        game = Game([row(10, chest_type=9999), row(11), row(12, PIPO, chest_type=9999, quantity=2), row(13)])
+        repo = Repo()
 
-        (collected, _incomplete, finished), _module = self.collect(game, repo := Repo())
+        self.assertEqual((2, 3, True), self.collect(game, repo))
 
-        self.assertFalse(finished)
+        self.assertEqual([11, 13, 10, 12], game.opened)
+        self.assertEqual([0], game.pictures)
+        self.assertEqual([(10, b"png"), (12, None), (12, None)], [(e["gift"], e["picture"]) for e in repo.incomplete])
+        self.assertEqual({9999}, {e["type"] for e in repo.incomplete})
+        self.assertEqual(["AndraBianca", "Pipolebon", "Pipolebon"], [e["player"] for e in repo.incomplete])
+        self.assertEqual({""}, {e["name"] for e in repo.incomplete})
+
+    def test_the_picture_is_of_the_chest_at_its_place_in_the_list(self):
+        game = Game([row(10, quantity=3, chest_type=9998), row(11, chest_type=9999)])
+        repo = Repo()
+        repo.in_review = {9998}
+
+        self.collect(game, repo)
+
+        self.assertEqual([0], game.pictures)   # the first type was opened, so the second is first
+
+    def test_each_new_type_is_pictured_in_its_turn(self):
+        game = Game([row(10, chest_type=9998), row(11, chest_type=9999)])
+        repo = Repo()
+
+        self.assertEqual((0, 2, True), self.collect(game, repo))
+
+        self.assertEqual([b"png", b"png"], [e["picture"] for e in repo.incomplete])
+        self.assertEqual([0, 0], game.pictures)
+
+    def test_a_type_pictured_when_the_passes_ran_out_is_still_opened_with_its_picture(self):
+        game = Game([row(10), row(11, chest_type=9999)])
+        repo = Repo()
+
+        with mock.patch.object(from_game, "MAX_PASSES", 1):
+            self.assertEqual((1, 1, True), self.collect(game, repo))
+
+        self.assertEqual([10, 11], game.opened)
+        self.assertEqual([(11, b"png")], [(e["gift"], e["picture"]) for e in repo.incomplete])
+
+    def test_a_type_with_a_picture_waiting_on_the_site_needs_no_other(self):
+        game = Game([row(10, chest_type=9999)])
+        repo = Repo()
+        repo.in_review = {9999}
+
+        self.assertEqual((0, 1, True), self.collect(game, repo))
+
+        self.assertEqual([], game.pictures)
+        self.assertEqual([None], [e["picture"] for e in repo.incomplete])
+
+    def test_a_panel_that_fails_leaves_the_rest_collected(self):
+        game = Game([row(10, chest_type=9999), row(11)])
+
+        def broken(_position):
+            raise RuntimeError("no browser")
+        game.camera = broken
+        repo = Repo()
+
+        self.assertEqual((1, 0, False), self.collect(game, repo))
+        self.assertEqual([11], game.opened)
+        self.assertEqual([10], list(game.waiting))
+
+    def test_a_gift_about_to_expire_goes_to_the_review_queue_rather_than_be_lost(self):
+        game = Game([row(10, chest_type=9999, expires=int(time.time()) + 600), row(11, chest_type=9999)])
+        game.camera = lambda position: None
+        repo = Repo()
+
+        collected, incomplete, _finished = self.collect(game, repo)
+
+        self.assertEqual((0, 1), (collected, incomplete))
+        self.assertEqual([10], game.opened)
+        self.assertEqual([11], list(game.waiting))
+        self.assertEqual("AndraBianca", repo.incomplete[0]["player"])
+        self.assertIsNone(repo.incomplete[0]["picture"])
+
+    def test_a_player_nobody_knows_goes_to_the_review_queue_and_is_opened(self):
+        game = Game([row(11, player=777)])
+        repo = Repo()
+
+        self.assertEqual((0, 1, True), self.collect(game, repo))
+
+        self.assertEqual([11], game.opened)
+        self.assertEqual(("Bone Chest", "", "Level 25 Crypt"), tuple(repo.incomplete[0][k] for k in ("name", "player", "source")))
+
+    def test_rows_the_database_refuses_go_to_the_review_queue(self):
+        game = Game([row(10)])
+        repo = Repo()
+        repo.refuse = True
+
+        self.assertEqual((0, 1, True), self.collect(game, repo))
+
+        self.assertEqual(1, len(repo.incomplete))
+        self.assertEqual([10], game.opened)
+
+    def test_a_refused_gift_is_taken_back_and_the_others_go_on(self):
+        game = Game([row(10), row(11), row(12)])
+        game.refused = {11}
+        repo = Repo()
+
+        collected, _incomplete, _finished = self.collect(game, repo)
+
         self.assertEqual(2, collected)
+        self.assertEqual([10, 12], repo.gifts_written())
+        self.assertEqual([11], list(game.waiting))
+
+    def test_a_gift_whose_answer_was_lost_stays_written(self):
+        game = Game([row(10), row(11)])
+        game.lost = {10}
+        repo = Repo()
+
+        self.assertEqual((2, 0, True), self.collect(game, repo))
+
         self.assertEqual([10, 11], repo.gifts_written())
 
-    def test_clicks_the_game_does_not_answer_end_in_asking_for_the_list(self):
+    def test_refusals_in_a_row_end_the_run_and_what_was_written_is_taken_back(self):
+        game = Game([row(gift_id) for gift_id in range(10, 20)])
+        game.refused = set(game.waiting)
+        repo = Repo()
+
+        self.assertEqual((0, 0, False), self.collect(game, repo))
+
+        self.assertEqual([], repo.gifts_written())
+
+    def test_losing_the_game_mid_run_keeps_what_was_written_for_the_next_run(self):
         game = Game([row(10), row(11)])
-        game.answers = False
+        game.lists_left = 1
+        repo = Repo()
 
-        (collected, _incomplete, finished), _module = self.collect(game, repo := Repo())
+        collected, _incomplete, finished = self.collect(game, repo)
 
-        # Both were opened all the same, and the list asked for again says so.
-        self.assertTrue(finished)
+        self.assertFalse(finished)
         self.assertEqual(2, collected)
         self.assertEqual([10, 11], repo.gifts_written())
 

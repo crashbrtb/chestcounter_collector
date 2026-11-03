@@ -18,6 +18,7 @@ began at 14:00 the afternoon before.
 import json
 import os
 import re
+import threading
 from datetime import date, datetime, time, timedelta
 from typing import Callable, Dict, Optional, Tuple
 
@@ -51,6 +52,8 @@ class ModuleSchedule:
         self.path = path
         self.clock = clock
         self.state: Dict[str, Dict[str, dict]] = {}
+        # Accounts working at once all write here.
+        self._lock = threading.Lock()
         self.load()
 
     # ------------------------------------------------------------ persistence
@@ -106,11 +109,12 @@ class ModuleSchedule:
         """Notes one run of a module on a profile, and writes it down at once."""
         now = self.clock()
         today = game_day(now, day_start).isoformat()
-        entry = self.entry(module_key, account, profile)
-        entry["attempts"] = int(entry.get("attempts", 0)) + 1 if entry.get("attempts_day") == today else 1
-        entry["attempts_day"] = today
-        entry["last_attempt"] = now.isoformat(timespec="seconds")
-        if success:
-            entry["last_success"] = entry["last_attempt"]
-        self.state.setdefault(module_key, {})[self._who(account, profile)] = entry
-        self.save()
+        with self._lock:
+            entry = self.entry(module_key, account, profile)
+            entry["attempts"] = int(entry.get("attempts", 0)) + 1 if entry.get("attempts_day") == today else 1
+            entry["attempts_day"] = today
+            entry["last_attempt"] = now.isoformat(timespec="seconds")
+            if success:
+                entry["last_success"] = entry["last_attempt"]
+            self.state.setdefault(module_key, {})[self._who(account, profile)] = entry
+            self.save()

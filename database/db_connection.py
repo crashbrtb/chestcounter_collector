@@ -6,8 +6,7 @@ profile and closed as soon as its chests are in - a run that visits six profiles
 should not hold six idle connections while the game loads.
 
 The charset is pinned to utf8mb4 on purpose: player names carry accents and
-emoji, and the whole point of moving to a better OCR engine is lost if the
-database mangles what the OCR got right.
+emoji, and the database must not mangle them.
 
 Choosing a collation
 --------------------

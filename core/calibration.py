@@ -75,12 +75,9 @@ class Step(NamedTuple):
         return self.type == "region"
 
 
-# The steps every module depends on: what is in the way of the board, and how to
-# get to a profile. They are calibrated once and come first because the store is
-# what covers everything else. The game opens it by itself, and with it on top
-# the profile menu and every other button underneath cannot be reached - so
-# calibrating the marker and its X, and closing it, is what clears the screen
-# for all the rest.
+# The steps every module that reads the screen depends on: what is in the way of
+# the board. The game opens the store by itself, and with it on top every button
+# underneath cannot be reached.
 #
 # Each module adds the steps of its own screens after these (see
 # modules/registry.py). A step is known by its name: a module that needs a
@@ -94,29 +91,9 @@ SHARED_STEPS: List[Step] = [
          optional=True),
     Step("store_close_button", "click", "Close store (optional)",
          "Click the X that CLOSES the store.\n"
-         "With the store closed, the game is on the screen the next step needs.",
+         "With the store closed, the game is on the screen the next steps need.",
          optional=True, acts=True),
-    Step("profile_menu_button", "click", "Profile menu",
-         "In the logged-in game, click the button that opens the PROFILES (cities) list.",
-         acts=True),
-    Step("profiles_list_area", "area", "Profiles list",
-         "Mark the AREA where profile names appear.\n"
-         "This is where each profile's configured name will be searched.\n"
-         "Click two opposite corners."),
-    Step("profile_switch_confirm", "region", "Confirm switch button",
-         "Mark the BUTTON that confirms switching profile.\n"
-         "Its image is saved so it can be found even if its position shifts.",
-         acts=True),
-    Step("profile_name_display_area", "area", "Active profile name",
-         "Once inside a profile, mark the area where the game displays the ACTIVE profile name.\n"
-         "This verifies that switching succeeded."),
 ]
-
-# Without these no profile can be reached, whatever module is going to run on
-# it: the ones a run refuses to start without. (The wizard asks for every step
-# that is not optional; a run is less strict, as it always was.)
-SHARED_REQUIRED_STEPS = ("profile_menu_button", "profiles_list_area", "profile_name_display_area")
-
 
 class StepGroup(NamedTuple):
     """The steps of one part of the game, under the heading the wizard shows them with."""
@@ -352,13 +329,14 @@ class Calibration:
             return []
 
         outside = []
+        # A step that no longer exists may still be in the file: it is nobody's click.
         for name in self.points:
             point = self.point(name)
-            if point and not (0 <= point[0] < page_w and 0 <= point[1] < page_h):
+            if name in self.steps_by_name and point and not (0 <= point[0] < page_w and 0 <= point[1] < page_h):
                 outside.append(name)
         for name in self.regions:
             region = self.region(name)
-            if region and (region[0] >= page_w or region[1] >= page_h
+            if name in self.steps_by_name and region and (region[0] >= page_w or region[1] >= page_h
                            or region[0] + region[2] <= 0 or region[1] + region[3] <= 0):
                 outside.append(name)
         return outside
