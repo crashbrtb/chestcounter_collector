@@ -191,6 +191,7 @@ class GameCollection:
     # -------------------------------------------------------------- opening
     def _open(self, waiting: List[Gift]) -> Tuple[List[Gift], bool]:
         """Writes and opens each gift. Returns the gifts it tried, and False when it had to give up."""
+        self.repo.keep_alive()   # a picture may have kept the database idle long enough for the server to drop it
         in_database = self.repo.chests_of_gifts(waiting[0].gift_id, waiting[-1].gift_id)
         already = sum(1 for gift in waiting if in_database.get(gift.gift_id) and gift.gift_id not in self.written)
         if already:
