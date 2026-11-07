@@ -9,7 +9,6 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.settings import ConfigManager  # noqa: E402
-from core.calibration import Calibration  # noqa: E402
 from core.schedule import SCHEDULE_DAILY, SCHEDULE_EVERY_RUN, ModuleSchedule  # noqa: E402
 from fakes import make_config  # noqa: E402
 from modules.registry import MODULES  # noqa: E402
@@ -18,7 +17,6 @@ try:
     import customtkinter as ctk
 
     from gui import app as gui_app
-    from gui.calibration_wizard import CalibrationWizard
 except Exception as exc:  # pragma: no cover - no display, or customtkinter missing
     ctk = None
     IMPORT_ERROR = str(exc)
@@ -31,9 +29,6 @@ class AppTest(unittest.TestCase):
         folder = self.tmp.name
         self.config = make_config(folder)
         patches = [
-            # Nothing of this machine's real calibration or run history is touched.
-            mock.patch.object(gui_app, "Calibration", lambda groups: Calibration(
-                groups, os.path.join(folder, "calibration.json"), os.path.join(folder, "refs"))),
             mock.patch.object(gui_app, "ModuleSchedule",
                               lambda: ModuleSchedule(os.path.join(folder, "module_state.json"))),
             mock.patch.object(gui_app.messagebox, "showinfo", lambda *a, **k: None),
@@ -59,7 +54,7 @@ class AppTest(unittest.TestCase):
         self.assertEqual(SCHEDULE_DAILY, self.app.widgets["modules.events"]["schedule"].get())
         self.assertEqual(SCHEDULE_EVERY_RUN, self.app.widgets["modules.chests"]["schedule"].get())
 
-        # Alpha has a clan site; the Journal only needs calibrating for a new tournament.
+        # Alpha has a clan site, Beta only a database.
         self.assertIn("1 profile(s) set up", self.app.module_status["events"].cget("text"))
         self.assertIn("2 profile(s) set up", self.app.module_status["chests"].cget("text"))
 
@@ -93,14 +88,14 @@ class AppTest(unittest.TestCase):
 
         self.app._run_in_background = lambda target, **options: target()
         for answer, expected in ((False, []), (True, [(["members"], True)])):
-            self.app.context = FakeContext(self.config, self.app.calibration, browser=FakeBrowser())
+            self.app.context = FakeContext(self.config, browser=FakeBrowser())
             with mock.patch.object(gui_app.messagebox, "askyesno", lambda *a, **k: answer), \
                     mock.patch("core.runner.ModuleRunner", Runner):
                 self.app.module_run_buttons["members"].invoke()
             self.assertEqual(expected, runs)
 
         # Run now is still every enabled module, on its schedule.
-        self.app.context = FakeContext(self.config, self.app.calibration, browser=FakeBrowser())
+        self.app.context = FakeContext(self.config, browser=FakeBrowser())
         with mock.patch.object(gui_app.messagebox, "askyesno", lambda *a, **k: True), \
                 mock.patch("core.runner.ModuleRunner", Runner):
             self.app.run_collection()
@@ -177,19 +172,6 @@ class AppTest(unittest.TestCase):
         with mock.patch("core.context.browser_for", lambda config, account: Window()):
             self.app.open_account_window(self.app.cards[0])
         self.assertEqual([True], opened)
-
-    def test_the_wizard_lists_one_calibration_grouped_by_module(self):
-        from fakes import FakeBrowser, FakeContext
-
-        context = FakeContext(self.config, self.app.calibration, browser=FakeBrowser())
-        context.browser.capture = lambda *a, **k: None
-        wizard = CalibrationWizard(self.app, context)
-        wizard.update()
-        self.assertEqual(len(self.app.calibration.steps), len(wizard.rows))
-        self.assertEqual(["shared", "chests", "events"], [g.key for g in wizard.calibration.groups])
-        wizard.go_to(len(wizard.steps) - 1)
-        self.assertEqual("Journal: next page", wizard.lbl_title.cget("text"))
-        wizard.destroy()
 
 
 if __name__ == "__main__":

@@ -8,7 +8,6 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.events import api, autosend, journal, mapper  # noqa: E402
-from modules.events.screen import CardPicture  # noqa: E402
 from test_events_journal import ENDED_AT  # noqa: E402
 from test_events_mapper import FakeFeed, ranking_entry, uid  # noqa: E402
 from utils.cancel import cancellation  # noqa: E402
@@ -80,8 +79,8 @@ class AutoSearchTest(unittest.TestCase):
     def search(self, feed, site, known=lambda _t: "Epic Hunt", **options):
         options = mapper.MapperOptions(interval=0, cards_per_page=3, **options)
         return autosend.AutoSearch(
-            feed, lambda _page, _card: CardPicture(b"page", None), self.collector, site, options,
-            local_info=self.sent.get, mark_sent=self.mark, catalogue_name=known, has_picture=lambda _t: False,
+            feed, self.collector, site, options,
+            local_info=self.sent.get, mark_sent=self.mark, catalogue_name=known,
             client_version="test",
             clock=lambda: ENDED_AT + 10 * HOUR,
         )
@@ -123,7 +122,7 @@ class AutoSearchTest(unittest.TestCase):
         self.assertFalse(post["auto_publish"])
         self.assertIn("id:1002", [r["name"] for r in post["rows"]])
 
-    def test_a_new_type_goes_to_the_catalogue_with_a_picture_and_its_rankings_wait(self):
+    def test_a_new_type_goes_to_the_catalogue_nameless_and_its_rankings_wait(self):
         known = lambda t: "" if t.tournament_key.split(":")[0] in ("1024", "1007") else "Known"
         site = FakeSite(latest_ended_at=None)
         feed = FakeFeed([ranking_entry(1, ENDED_AT, (1024, 1)), ranking_entry(2, ENDED_AT - HOUR, (1007, 3)),
@@ -134,7 +133,7 @@ class AutoSearchTest(unittest.TestCase):
         self.assertEqual([uid(5003)], [p["result_uid"] for p in site.posts], "only the named one is sent")
         self.assertEqual(3, summary.nameless)
         self.assertEqual(2, len(site.catalogue))
-        self.assertEqual({"cGFnZQ=="}, {e["picture"] for e in site.catalogue})
+        self.assertFalse(any("picture" in e or "name" in e for e in site.catalogue))
         self.assertFalse(summary.complete, "the next search looks again")
         self.assertEqual(3, site.reports[0]["errors"])
 

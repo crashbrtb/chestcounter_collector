@@ -150,7 +150,6 @@ class Repo:
                                                                  KALEL: "KALEL"})
         self.rows = {}            # row id -> (name, player, source, generated_at, gift id)
         self.incomplete = []
-        self.in_review = set()
         self.learned = {}
         self.existing = dict(existing or {})
         self.last_id = None
@@ -186,13 +185,15 @@ class Repo:
         self.rows[self._next] = (name, player, source, collected_at, game["game_gift_id"])
         return True
 
-    def insert_incomplete_chest(self, name, player, source, screenshot=None, collected_at=None, game=None):
+    def insert_incomplete_chest(self, name, player, source, collected_at=None, game=None):
         self.incomplete.append({"name": name, "player": player, "source": source, "gift": game["game_gift_id"],
-                                "type": game["game_type_id"], "picture": screenshot})
+                                "type": game["game_type_id"]})
         return True
 
-    def types_in_review(self):
-        return set(self.in_review)
+    def learn_chest_type(self, type_id, name, source):
+        self.learned[type_id] = (name, source)
+        self.types.setdefault(type_id, (name, source))
+        return True
 
     def delete_chest(self, row_id):
         return self.rows.pop(row_id, None) is not None
@@ -208,20 +209,15 @@ class Game:
         self.waiting = {gift.gift_id: gift for gift in map(parse_gift_row, rows)}
         self.opened = []
         self.refused = set()         # gifts refused and left in place
+        self.ignored = set()         # gifts the game says nothing against but leaves in place
         self.lost = set()            # gifts opened whose answer never came
         self.arrivals = []           # rows that appear after the next gift is opened
         self.lists_left = None       # how many more lists it answers
         self.names = {}              # the players it knows beyond the site's member list
-        self.pictures = []           # the places of the list the panel was pictured at
-        self.camera = lambda position: b"png"
         self.log = []
 
     def player_names(self, player_ids):
         return {player: self.names[player] for player in player_ids if player in self.names}
-
-    def take_picture(self, position):
-        self.pictures.append(position)
-        return self.camera(position)
 
     def gifts(self, _clan_id):
         if self.lists_left is not None:
@@ -233,6 +229,8 @@ class Game:
     def open_gift(self, gift):
         if gift.gift_id in self.refused:
             raise GameLinkError("refused")
+        if gift.gift_id in self.ignored:
+            return
         del self.waiting[gift.gift_id]
         self.opened.append(gift.gift_id)
         for new in self.arrivals:
@@ -248,9 +246,12 @@ class Collection(unittest.TestCase):
         patcher = mock.patch.object(from_game, "FAILURE_WAIT", 0)
         patcher.start()
         self.addCleanup(patcher.stop)
+        cat_patcher = mock.patch.object(from_game, "lookup_chest_types", return_value={})
+        cat_patcher.start()
+        self.addCleanup(cat_patcher.stop)
 
     def collect(self, game, repo):
-        return GameCollection("Main / Alpha", repo, game, CLAN, 0, game.take_picture).run()
+        return GameCollection("Main / Alpha", repo, game, CLAN, 0).run()
 
     def test_every_gift_is_written_and_opened_oldest_first(self):
         game = Game([row(10), row(11, PIPO, SCORPION), row(12, KALEL, BRIAREUS, quantity=3), row(13)])
@@ -281,7 +282,7 @@ class Collection(unittest.TestCase):
     def test_requests_start_at_least_the_interval_apart(self):
         game = Game([row(10), row(11), row(12)])
         started = time.time()
-        GameCollection("Main / Alpha", Repo(), game, CLAN, 0.05, game.take_picture).run()
+        GameCollection("Main / Alpha", Repo(), game, CLAN, 0.05).run()
         self.assertGreaterEqual(time.time() - started, 0.14)
 
     def test_a_gift_already_in_the_database_is_opened_and_not_written_again(self):
@@ -312,12 +313,49 @@ class Collection(unittest.TestCase):
         self.assertEqual([11], repo.gifts_written())
 
     def test_a_gift_of_an_unknown_kind_is_left_in_the_game(self):
-        game = Game([row(10, kind=2), row(11)])
+        game = Game([row(10, kind=3), row(11)])
 
         self.assertEqual((1, 0, True), self.collect(game, Repo()))
 
         self.assertEqual([11], game.opened)
         self.assertEqual([10], list(game.waiting))
+
+    # ------------------------------------------------------- the Triumphal Gifts tab
+    def test_a_triumphal_gift_is_written_and_opened_like_the_others(self):
+        game = Game([row(10), row(11, PIPO, SCORPION, quantity=3, kind=2), row(12)])
+        repo = Repo()
+
+        self.assertEqual((5, 0, True), self.collect(game, repo))
+
+        self.assertEqual([10, 11, 12], game.opened)
+        self.assertEqual([10, 11, 11, 11, 12], repo.gifts_written())
+
+    def test_a_triumphal_gift_the_game_refuses_sets_the_tab_aside_and_the_gifts_tab_goes_on(self):
+        game = Game([row(10, kind=2), row(11), row(12, kind=2), row(13), row(14), row(15)])
+        game.refused = {10}
+        repo = Repo()
+        collection = GameCollection("Main / Alpha", repo, game, CLAN, 0)
+
+        self.assertEqual((4, 0, False), collection.run())
+
+        self.assertEqual([11, 13, 14, 15], game.opened)
+        self.assertEqual([11, 13, 14, 15], repo.gifts_written())   # what was written for 10 was taken back
+        self.assertEqual([10, 12], list(game.waiting))
+        self.assertIn("Triumphal Gifts", collection.problem)
+
+    def test_a_triumphal_gift_the_game_leaves_as_it_was_is_taken_back_and_the_tab_set_aside(self):
+        game = Game([row(10, kind=2), row(11), row(12, kind=2)])
+        game.ignored = {10, 12}
+        repo = Repo()
+        collection = GameCollection("Main / Alpha", repo, game, CLAN, 0)
+
+        collected, _incomplete, finished = collection.run()
+
+        self.assertFalse(finished)
+        self.assertEqual(1, collected)
+        self.assertEqual([11], repo.gifts_written())
+        self.assertEqual([10, 12], sorted(game.waiting))
+        self.assertIn("Triumphal Gifts", collection.problem)
 
     def test_a_player_the_site_does_not_know_is_named_by_the_game(self):
         game = Game([row(10, player=777)])
@@ -328,76 +366,8 @@ class Collection(unittest.TestCase):
 
         self.assertEqual([("Bone Chest", "Newcomer", "Level 25 Crypt")], [r[:3] for r in repo.rows.values()])
 
-    def test_a_new_type_is_pictured_after_the_known_ones_and_goes_to_the_queue(self):
-        game = Game([row(10, chest_type=9999), row(11), row(12, PIPO, chest_type=9999, quantity=2), row(13)])
-        repo = Repo()
-
-        self.assertEqual((2, 3, True), self.collect(game, repo))
-
-        self.assertEqual([11, 13, 10, 12], game.opened)
-        self.assertEqual([0], game.pictures)
-        self.assertEqual([(10, b"png"), (12, None), (12, None)], [(e["gift"], e["picture"]) for e in repo.incomplete])
-        self.assertEqual({9999}, {e["type"] for e in repo.incomplete})
-        self.assertEqual(["AndraBianca", "Pipolebon", "Pipolebon"], [e["player"] for e in repo.incomplete])
-        self.assertEqual({""}, {e["name"] for e in repo.incomplete})
-
-    def test_the_picture_is_of_the_chest_at_its_place_in_the_list(self):
-        game = Game([row(10, quantity=3, chest_type=9998), row(11, chest_type=9999)])
-        repo = Repo()
-        repo.in_review = {9998}
-
-        self.collect(game, repo)
-
-        self.assertEqual([0], game.pictures)   # the first type was opened, so the second is first
-
-    def test_each_new_type_is_pictured_in_its_turn(self):
-        game = Game([row(10, chest_type=9998), row(11, chest_type=9999)])
-        repo = Repo()
-
-        self.assertEqual((0, 2, True), self.collect(game, repo))
-
-        self.assertEqual([b"png", b"png"], [e["picture"] for e in repo.incomplete])
-        self.assertEqual([0, 0], game.pictures)
-
-    def test_a_type_pictured_when_the_passes_ran_out_is_still_opened_with_its_picture(self):
-        game = Game([row(10), row(11, chest_type=9999)])
-        repo = Repo()
-
-        with mock.patch.object(from_game, "MAX_PASSES", 1):
-            self.assertEqual((1, 1, True), self.collect(game, repo))
-
-        self.assertEqual([10, 11], game.opened)
-        self.assertEqual([(11, b"png")], [(e["gift"], e["picture"]) for e in repo.incomplete])
-
-    def test_a_connection_the_server_dropped_during_a_picture_is_opened_again(self):
-        game = Game([row(10), row(11, chest_type=9999)])
-        repo = Repo()
-
-        def picture_while_the_server_drops_the_connection(_position):
-            repo.connected = False
-            return b"png"
-        game.camera = picture_while_the_server_drops_the_connection
-
-        self.assertEqual((1, 1, True), self.collect(game, repo))
-        self.assertEqual([10, 11], game.opened)
-        self.assertEqual([(11, b"png")], [(e["gift"], e["picture"]) for e in repo.incomplete])
-
-    def test_a_type_with_a_picture_waiting_on_the_site_needs_no_other(self):
-        game = Game([row(10, chest_type=9999)])
-        repo = Repo()
-        repo.in_review = {9999}
-
-        self.assertEqual((0, 1, True), self.collect(game, repo))
-
-        self.assertEqual([], game.pictures)
-        self.assertEqual([None], [e["picture"] for e in repo.incomplete])
-
-    def test_a_panel_that_fails_leaves_the_rest_collected(self):
+    def test_an_unknown_type_not_in_the_catalog_is_left_in_the_game_unless_about_to_expire(self):
         game = Game([row(10, chest_type=9999), row(11)])
-
-        def broken(_position):
-            raise RuntimeError("no browser")
-        game.camera = broken
         repo = Repo()
 
         self.assertEqual((1, 0, False), self.collect(game, repo))
@@ -406,7 +376,6 @@ class Collection(unittest.TestCase):
 
     def test_a_gift_about_to_expire_goes_to_the_review_queue_rather_than_be_lost(self):
         game = Game([row(10, chest_type=9999, expires=int(time.time()) + 600), row(11, chest_type=9999)])
-        game.camera = lambda position: None
         repo = Repo()
 
         collected, incomplete, _finished = self.collect(game, repo)
@@ -415,7 +384,6 @@ class Collection(unittest.TestCase):
         self.assertEqual([10], game.opened)
         self.assertEqual([11], list(game.waiting))
         self.assertEqual("AndraBianca", repo.incomplete[0]["player"])
-        self.assertIsNone(repo.incomplete[0]["picture"])
 
     def test_a_player_nobody_knows_goes_to_the_review_queue_and_is_opened(self):
         game = Game([row(11, player=777)])
@@ -475,6 +443,68 @@ class Collection(unittest.TestCase):
         self.assertFalse(finished)
         self.assertEqual(2, collected)
         self.assertEqual([10, 11], repo.gifts_written())
+
+    def test_a_new_type_found_in_the_catalog_is_learned_and_collected(self):
+        game = Game([row(10, chest_type=5789, quantity=2)])
+        repo = Repo()
+        catalog = mock.MagicMock(return_value={5789: ("Braided Chest", "Level 35 epic Crypt")})
+
+        result = GameCollection("Main / Alpha", repo, game, CLAN, 0, lookup_types=catalog).run()
+
+        self.assertEqual((2, 0, True), result)
+        catalog.assert_called_once_with([5789])
+        self.assertEqual({5789: ("Braided Chest", "Level 35 epic Crypt")}, repo.learned)
+        self.assertEqual([], repo.incomplete)
+        self.assertEqual({("Braided Chest", "AndraBianca", "Level 35 epic Crypt")}, {r[:3] for r in repo.rows.values()})
+
+    def test_catalog_is_not_called_when_all_gift_types_are_already_known(self):
+        game = Game([row(10, chest_type=BONE), row(11, PIPO, SCORPION)])
+        repo = Repo()
+        catalog = mock.MagicMock()
+
+        result = GameCollection("Main / Alpha", repo, game, CLAN, 0, lookup_types=catalog).run()
+
+        self.assertEqual((2, 0, True), result)
+        catalog.assert_not_called()
+
+
+class CatalogCaching(unittest.TestCase):
+    def test_local_cache_is_used_without_consulting_cdn_until_a_type_is_missing(self):
+        import tempfile
+        import os
+        from modules.chests import catalog
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cache_file = os.path.join(tmp, "chest_types.json")
+            cat = catalog.ChestCatalog(cache_path=cache_file)
+            cat._loaded = True
+            cat._version = {"no_duplicates": "v1", "strings": "s1", "vectors": "vec1", "en_US": "m1"}
+            cat._types = {5784: ("Chest of the Cursed", "Level 35 epic Crypt")}
+            cat._save_disk_cache()
+
+            cat2 = catalog.ChestCatalog(cache_path=cache_file)
+            with mock.patch.object(catalog, "fetch_cdn_version") as cdn_ver, \
+                 mock.patch.object(catalog, "fetch_cdn_catalog") as cdn_cat:
+                # 1. Known in local cache -> 0 CDN calls
+                self.assertEqual(
+                    {5784: ("Chest of the Cursed", "Level 35 epic Crypt")},
+                    cat2.lookup([5784]),
+                )
+                cdn_ver.assert_not_called()
+                cdn_cat.assert_not_called()
+
+                # 2. Unknown in local cache -> checks CDN version; when newer, downloads & updates cache
+                cdn_ver.return_value = ({"no_duplicates": "v2", "strings": "s2", "vectors": "vec2", "en_US": "m2"}, "m2")
+                cdn_cat.return_value = {
+                    5784: ("Chest of the Cursed", "Level 35 epic Crypt"),
+                    5789: ("Braided Chest", "Level 35 epic Crypt"),
+                }
+                self.assertEqual(
+                    {5789: ("Braided Chest", "Level 35 epic Crypt")},
+                    cat2.lookup([5789]),
+                )
+                cdn_ver.assert_called_once()
+                cdn_cat.assert_called_once()
 
 
 if __name__ == "__main__":

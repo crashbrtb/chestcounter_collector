@@ -35,7 +35,7 @@ def check():
     # 2. Libraries
     print("\n[2] Libraries:")
     missing = []
-    for mod in ["cv2", "PIL", "customtkinter", "mysql.connector", "websocket", "requests"]:
+    for mod in ["customtkinter", "mysql.connector", "websocket", "requests", "zstandard"]:
         try:
             __import__(mod)
             print(f"    {mod:<18}: [OK]")

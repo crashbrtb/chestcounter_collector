@@ -1,15 +1,12 @@
 """Stand-ins for the game and the services around it, shared by the tests.
 
 Nothing here opens a browser, a database or the network: a run is exercised
-against these, with a configuration and a calibration written to a temporary
-folder.
+against these, with a configuration written to a temporary folder.
 """
 import os
 
 from config.settings import AccountConfig, ConfigManager, DatabaseConfig, ProfileConfig
-from core.calibration import Calibration
 from core.schedule import ModuleSchedule
-from modules.registry import calibration_scope, step_groups
 
 SITE_A = {"site_url": "https://clan-a.example.com", "api_token": "cct_a"}
 SITE_B = {"site_url": "https://clan-b.example.com", "api_token": "cct_b"}
@@ -34,24 +31,6 @@ def make_config(folder, accounts=None):
     return config
 
 
-def make_calibration(folder, config, complete=True):
-    """The shared steps calibrated; every module's too, unless `complete` is off."""
-    calibration = Calibration(step_groups(), os.path.join(folder, "calibration.json"),
-                              os.path.join(folder, "refs"))
-    calibration.set_viewport(1000, 800)
-    for step in calibration.steps:
-        if step.optional or (not complete and step.name.startswith("journal_")):
-            continue
-        if step.type == "click":
-            calibration.set_point(step.name, 100, 100)
-        else:
-            # An 'area' is enough for the tests: no reference picture is searched for.
-            calibration.regions[step.name] = {"left": 10, "top": 10, "width": 50, "height": 20}
-    calibration.use_viewport(1000, 800)
-    calibration.required = calibration_scope(config)
-    return calibration
-
-
 class FakeBrowser:
     host, port, tab_id, url_filter = "127.0.0.1", 9222, "TAB", "totalbattle.com"
 
@@ -70,17 +49,11 @@ class FakeBrowser:
     def reload(self, wait=True):
         self.reloads += 1
 
-    def refresh_dpr(self):
-        return 1.0
-
     def restart(self):
         self.restarts += 1
 
     def save_screenshot(self, _path):
         return False
-
-    def viewport(self):
-        return 1000, 800
 
 
 class FakeLogin:
@@ -111,27 +84,12 @@ class FakeProfiles:
         return self.active or ""
 
 
-class FakeGameState:
-    def __init__(self):
-        self.prepared = 0
-        self.closed = 0
-
-    def prepare_board(self):
-        self.prepared += 1
-
-    def close_modals(self, presses=2):
-        self.closed += 1
-
-
 class FakeContext:
     """What core.context.RunContext gives a run, without a browser behind it."""
 
-    def __init__(self, config, calibration, browser=None):
+    def __init__(self, config, browser=None):
         self.config = config
-        self.calibration = calibration
         self.browser = browser or FakeBrowser()
-        self.vision = None
-        self.game_state = FakeGameState()
         self.login = FakeLogin()
         self.profiles = FakeProfiles()
         self.browser_starts = 0
@@ -142,9 +100,6 @@ class FakeContext:
     def start_browser(self):
         self.browser_starts += 1
         return self.browser
-
-    def sync_viewport(self):
-        pass
 
     def close(self):
         pass

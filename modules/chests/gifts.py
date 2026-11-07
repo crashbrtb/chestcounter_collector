@@ -34,10 +34,14 @@ OPEN_ROUTE = 15013
 GIFTS_FIELD = 13
 GIFT_LIFETIME_SECONDS = 20 * 60 * 60
 
-# The row's last field. Every gift seen so far has 1 there; one that has
-# something else is of a kind nobody has looked at yet, and is left in the game
-# (the Triumphal Gifts tab was empty on every recording).
+# The row's last field: the tab of the panel the gift is listed in. 1 is the
+# Gifts tab; 2 the Triumphal Gifts tab (seen on 06/11/2026: three Bronze Chests
+# from the Bank, gift 48437, type 1155, quantity 3). One with anything else is of
+# a kind nobody has looked at yet, and is left in the game.
 PLAIN_GIFT = 1
+TRIUMPHAL_GIFT = 2
+KNOWN_KINDS = (PLAIN_GIFT, TRIUMPHAL_GIFT)
+TAB_NAMES = {PLAIN_GIFT: "Gifts", TRIUMPHAL_GIFT: "Triumphal Gifts"}
 
 
 @dataclass(frozen=True)

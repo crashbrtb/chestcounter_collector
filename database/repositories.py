@@ -1,9 +1,9 @@
 """
-Data access layer and repositories for Chests, Player Mappings, and Event Scores.
+Data access layer and repositories for the chests.
 """
 
 from datetime import datetime
-from typing import Optional, List, Dict, Any, Set, Tuple
+from typing import Optional, List, Dict, Any, Tuple
 from mysql.connector import MySQLConnection, Error
 from utils.logger import logger
 
@@ -14,7 +14,7 @@ GAME_COLUMNS = ("game_gift_id", "game_type_id", "game_player_id")
 
 
 class ChestRepository:
-    """Handles persistence of collected clan gifts, errors, and mappings."""
+    """Handles persistence of collected clan gifts and errors."""
 
     def __init__(self, connection: MySQLConnection):
         self.connection = connection
@@ -25,40 +25,19 @@ class ChestRepository:
     def keep_alive(self) -> None:
         """
         Opens the connection again if the server closed it while the collector was
-        elsewhere. A picture of the gifts panel keeps the database idle for half a
-        minute, and some servers drop a connection idle for less (on 03/11/2026 one
-        dropped every connection after each picture). Every write here is committed
-        as it is made, so nothing is lost with the old connection.
+        elsewhere - asking the game, or downloading its chest catalogue, can keep the
+        database idle for a while, and some servers drop a connection idle for less
+        than a minute (on 03/11/2026 one did). Every write here is committed as it is
+        made, so nothing is lost with the old connection.
         """
         self.connection.ping(reconnect=True, attempts=3, delay=2)
-
-    def get_player_name_mapping(self, ocr_player_name: str) -> str:
-        """
-        Checks if a player name is mapped to a canonical player name.
-        Returns mapped name if found, else original name.
-        """
-        cursor = self.connection.cursor()
-        try:
-            query = "SELECT correct_name FROM player_name_mappings WHERE ocr_text = %s"
-            cursor.execute(query, (ocr_player_name,))
-            result = cursor.fetchone()
-            if result and result[0]:
-                mapped = result[0]
-                logger.info(f"Player name '{ocr_player_name}' mapped to '{mapped}'")
-                return mapped
-            return ocr_player_name
-        except Error as e:
-            # Table might not exist or other SQL error
-            logger.debug(f"Could not query player_name_mappings: {e}")
-            return ocr_player_name
-        finally:
-            cursor.close()
 
     def insert_chest(self, name: str, player: str, source: str,
                      collected_at: Optional[datetime] = None,
                      game: Optional[Dict[str, int]] = None) -> bool:
         """
-        Inserts a successfully parsed chest into collected_chests table.
+        Inserts a chest into the collected_chests table, under the player's name
+        as the members table or the game gives it.
 
         `game` is what the game itself said about the chest, when it was read
         from the traffic: `game_gift_id`, `game_type_id` and `game_player_id`.
@@ -67,19 +46,16 @@ class ChestRepository:
         `last_id`, for whoever may need to take it back.
 
         `collected_at` is when the chest was GENERATED, worked out from the
-        countdown the game printed next to it - not when the collector read it.
-        The two are as much as twenty hours apart, and everything downstream
-        counts by day against a reset at 14:00, so the difference decides which
-        day a chest belongs to. Passing None leaves the column to the database's
-        own `current_timestamp`, which is what happens when the countdown could
-        not be read, and on a database old enough not to have the column.
+        expiry the game sends with it - not when the collector opened it. The two
+        are as much as twenty hours apart, and everything downstream counts by
+        day against a reset at 14:00, so the difference decides which day a
+        chest belongs to. Passing None leaves the column to the database's own
+        `current_timestamp`, as on a database old enough not to have the column.
         """
-        # Resolve mapped player name
-        mapped_player = self.get_player_name_mapping(player)
         dated = collected_at is not None and self.has_column("collected_chests", "collected_at")
 
         columns = ["name", "player", "source"]
-        values: List[Any] = [name, mapped_player, source]
+        values: List[Any] = [name, player, source]
         if dated:
             columns.append("collected_at")
             values.append(collected_at)
@@ -96,7 +72,7 @@ class ChestRepository:
                 f"VALUES ({', '.join(['%s'] * len(values))})", tuple(values))
             self.last_id = cursor.lastrowid
             self.connection.commit()
-            logger.debug(f"Inserted chest: '{name}', player: '{mapped_player}', source: '{source}'"
+            logger.debug(f"Inserted chest: '{name}', player: '{player}', source: '{source}'"
                          + (f", generated {collected_at:%Y-%m-%d %H:%M:%S}" if dated else ""))
             return True
         except Error as e:
@@ -182,29 +158,15 @@ class ChestRepository:
         try:
             cursor.execute(
                 "INSERT IGNORE INTO game_chest_types (game_type_id, name, source, standard_chest_id, created, modified) "
-                "VALUES (%s, %s, %s, (SELECT id FROM standard_chests WHERE source = %s LIMIT 1), "
-                "UTC_TIMESTAMP(), UTC_TIMESTAMP())", (type_id, name, source, source))
+                "VALUES (%s, %s, COALESCE((SELECT source FROM standard_chests WHERE source = %s LIMIT 1), %s), "
+                "(SELECT id FROM standard_chests WHERE source = %s LIMIT 1), "
+                "UTC_TIMESTAMP(), UTC_TIMESTAMP())", (type_id, name, source, source, source))
             self.connection.commit()
             return cursor.rowcount > 0
         except Error as exc:
             logger.error(f"Could not write chest type {type_id} to game_chest_types: {exc}")
             self.connection.rollback()
             return False
-        finally:
-            cursor.close()
-
-    def types_in_review(self) -> Set[int]:
-        """The chest types with a picture waiting in the review queue: no other is needed for them."""
-        if not self.has_column("incomplete_chests", "game_type_id"):
-            return set()
-        cursor = self.connection.cursor()
-        try:
-            cursor.execute("SELECT DISTINCT game_type_id FROM incomplete_chests "
-                           "WHERE status = 'pending' AND game_type_id IS NOT NULL AND screenshot IS NOT NULL")
-            return {int(type_id) for type_id, in cursor.fetchall()}
-        except Error as exc:
-            logger.debug(f"Could not read the chest types in review: {exc}")
-            return set()
         finally:
             cursor.close()
 
@@ -259,33 +221,21 @@ class ChestRepository:
             cursor.close()
 
     def insert_incomplete_chest(self, name: str, player: str, source: str,
-                                screenshot: Optional[bytes] = None,
                                 collected_at: Optional[datetime] = None,
                                 game: Optional[Dict[str, int]] = None) -> bool:
         """
-        Files a chest that could not be read, with the picture of it.
+        Files a chest with something missing - its type's name, or its player's -
+        with what is known of it and the game's ids, for a person to finish on the
+        web interface. The chest itself is opened all the same.
 
-        The picture is the point: a person can read it and finish the record by
-        hand, from the web interface. Without it the row
-        says only that something was missed, and the chest itself is already
-        gone from the game.
-
-        `collected_at` is the chest's generation time, as in `insert_chest` -
-        the countdown is often legible on a chest whose name is not, and a row
+        `collected_at` is the chest's generation time, as in `insert_chest`: a row
         corrected months later should carry the hour the chest was made, not the
-        hour someone got round to reading it.
-
-        Where the database has no `screenshot` column - the older of the two -
-        the row is still written, just without the image.
+        hour someone got round to it.
         """
-        with_image = screenshot is not None and self.has_column("incomplete_chests", "screenshot")
         dated = collected_at is not None and self.has_column("incomplete_chests", "collected_at")
 
         columns = ["name", "player", "source"]
         values: List[Any] = [name, player, source]
-        if with_image:
-            columns.append("screenshot")
-            values.append(screenshot)
         if dated:
             columns.append("collected_at")
             values.append(collected_at)
@@ -301,10 +251,7 @@ class ChestRepository:
                 f"VALUES ({', '.join(['%s'] * len(values))})", tuple(values))
             self.connection.commit()
             logger.warning(
-                f"Incomplete chest filed for review: '{name}', player '{player}', source '{source}'"
-                + (f" (com captura, {len(screenshot) // 1024} KB)" if with_image
-                   else " (sem captura)")
-            )
+                f"Incomplete chest filed for review: '{name}', player '{player}', source '{source}'")
             return True
         except Error as exc:
             logger.error(f"Error inserting incomplete chest: {exc}")
@@ -322,8 +269,8 @@ class ChestRepository:
         a name, a chest, something with a decision behind it - and the two kinds
         of problem the collector actually meets both have a better home:
 
-        * a chest it could not read goes to `incomplete_chests`, with the
-          screenshot and a review screen built around it;
+        * a chest with something missing goes to `incomplete_chests`, with a
+          review screen built around it;
         * a run that failed - a menu that did not open, a profile it could not
           reach - is operational, nobody resolves it from a web page, and it
           belongs in the local log.

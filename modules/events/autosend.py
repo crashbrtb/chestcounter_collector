@@ -10,7 +10,7 @@ One search, for one profile and so for one clan site (module.py starts it):
    each card of the clan's results with its players' names, and stops once it
    reaches entries older than that point - or more days old than the search was
    told to look back (MapperOptions.max_age_days);
-3. new types go to the site's catalogue with a picture, for a person to name; their
+3. new types go to the site's catalogue, nameless, for a person to name; their
    rankings wait, and the search is not complete until they are named;
 4. asks the site which of the tournaments found it already has, and sends
    the rest. When every player has a name the site is asked to publish
@@ -258,14 +258,12 @@ class AutoSearch:
     def __init__(
         self,
         feed,
-        take_picture: Callable[[int, int], object],
         collector: journal.JournalCollector,
         client: api.SiteClient,
         options: mapper.MapperOptions,
         local_info: Callable[[str], Optional[dict]],
         mark_sent: Callable[[str, dict], None],
         catalogue_name: Callable[[journal.Tournament], str],
-        has_picture: Callable[[journal.Tournament], bool],
         client_version: str,
         auto_publish: bool = True,
         on_log: Optional[Callable[[str], None]] = None,
@@ -273,14 +271,12 @@ class AutoSearch:
         use_site_cutoff: bool = True,
     ):
         self.feed = feed
-        self.take_picture = take_picture
         self.collector = collector
         self.client = client
         self.options = options
         self.local_info = local_info
         self.mark_sent = mark_sent
         self.catalogue_name = catalogue_name
-        self.has_picture = has_picture
         self.client_version = client_version
         self.auto_publish = auto_publish
         self.on_log = on_log
@@ -318,7 +314,6 @@ class AutoSearch:
         # nothing is sent and nothing is reported, so the next search goes back
         # to the same point.
         self.runner = mapper.JournalMapper(self.feed, self.collector, self.options, known_name=self.catalogue_name,
-                                           take_picture=self.take_picture, has_picture=self.has_picture,
                                            on_log=self._log)
         summary.cards = self.runner.run()
         summary.reason = self.runner.finish_reason

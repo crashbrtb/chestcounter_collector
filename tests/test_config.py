@@ -10,10 +10,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.schema import all_sections, field_for  # noqa: E402
 from config.settings import ConfigManager  # noqa: E402
-from core.calibration import SHARED_GROUP, Calibration, Step, StepGroup  # noqa: E402
 from core.schedule import SCHEDULE_DAILY, SCHEDULE_EVERY_RUN, game_day, parse_day_start  # noqa: E402
-from fakes import Clock, make_calibration, make_config, make_schedule  # noqa: E402
-from modules.registry import MODULES, calibration_scope, step_groups  # noqa: E402
+from fakes import Clock, make_config, make_schedule  # noqa: E402
+from modules.registry import MODULES  # noqa: E402
 
 
 class ConfigTest(unittest.TestCase):
@@ -90,54 +89,6 @@ class ConfigTest(unittest.TestCase):
     def test_all_sections_have_distinct_keys(self):
         keys = [section.key for section in all_sections()]
         self.assertEqual(len(keys), len(set(keys)))
-
-
-class CalibrationGroupsTest(unittest.TestCase):
-    def test_shared_steps_come_first_and_each_module_brings_its_own(self):
-        groups = step_groups()
-        self.assertEqual(["shared", "chests", "events"], [g.key for g in groups])
-        names = [step.name for group in groups for step in group.steps]
-        self.assertEqual(len(names), len(set(names)), "a step is calibrated once")
-        self.assertIn("store_marker", [s.name for s in groups[0].steps])
-        self.assertIn("open_button", [s.name for s in groups[1].steps])
-        self.assertIn("journal_next_page", [s.name for s in groups[2].steps])
-
-    def test_a_step_two_modules_declare_is_calibrated_once(self):
-        first = StepGroup("a", "A", [Step("clan_button", "click", "Clan", "")])
-        with tempfile.TemporaryDirectory() as folder:
-            cal = Calibration([SHARED_GROUP, first], os.path.join(folder, "c.json"), folder)
-            cal.set_viewport(1000, 800)
-            cal.set_point("clan_button", 5, 6)
-            cal.save()
-            # Another module reading the same name gets the same point.
-            again = Calibration([SHARED_GROUP, first], cal.path, folder)
-            self.assertEqual((5, 6), again.point("clan_button"))
-
-    def test_only_the_modules_in_use_make_the_calibration_incomplete(self):
-        with tempfile.TemporaryDirectory() as folder:
-            config = make_config(folder)
-            calibration = make_calibration(folder, config, complete=False)
-            # Alpha has a clan site, so the Journal steps are asked for.
-            self.assertIn("journal_button", calibration.missing_steps())
-
-            config.set("modules.events", "enabled", False)
-            calibration.required = calibration_scope(config)
-            self.assertEqual([], calibration.missing_steps())
-            self.assertTrue(calibration.complete)
-
-    def test_a_calibration_file_from_before_the_modules_still_loads(self):
-        with tempfile.TemporaryDirectory() as folder:
-            path = os.path.join(folder, "calibration.json")
-            with open(path, "w", encoding="utf-8") as fh:
-                json.dump({"viewport": {"width": 1536, "height": 731},
-                           "points": {"profile_menu_button": [10, 20], "clan_button": [30, 40]},
-                           "regions": {"chest_area": {"left": 1, "top": 2, "width": 30, "height": 40}},
-                           "step_viewports": {"clan_button": [1536, 731]}}, fh)
-            calibration = Calibration(step_groups(), path, folder)
-            self.assertTrue(calibration.is_calibrated("clan_button"))
-            self.assertTrue(calibration.is_calibrated("chest_area"))
-            self.assertFalse(calibration.is_calibrated("journal_button"))
-            self.assertEqual("Clan button, Journal button", calibration.titles(["clan_button", "journal_button"]))
 
 
 class ScheduleTest(unittest.TestCase):

@@ -4,7 +4,7 @@ What a feature module is.
 A module is one job done on a profile of the game: collecting the clan chests,
 sending the tournament rankings to the clan site, and whatever comes next. The
 rest of the application - the configuration file, the settings window, the
-calibration wizard, the run - is built from what each module declares here, so
+run - is built from what each module declares here, so
 adding one means writing its folder under modules/ and listing it in
 modules/registry.py. Nothing else has to learn its name.
 
@@ -14,8 +14,6 @@ key, title, description   how it is called in config.json, in the window, in the
 settings                  its own parameters (config.schema.Field), shown in the Modules tab
 profile_fields            what it needs to know about each profile (a site token, say),
                           edited per profile in Accounts and profiles
-steps                     the calibration steps of its own screens, in the order of a pass
-required_steps            the steps a run cannot start without
 default_schedule          every run, or once a day
 
 Every module gets two parameters for free: whether it is enabled, and when it
@@ -34,7 +32,6 @@ from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from config.schema import Field, Section, module_section_key
 from config.settings import ProfileConfig
-from core.calibration import Step
 from core.schedule import DEFAULT_DAY_START, SCHEDULE_DAILY, SCHEDULE_EVERY_RUN, SCHEDULES
 
 
@@ -42,7 +39,7 @@ class ModuleAction(NamedTuple):
     """A button on the module's card in the Modules tab."""
 
     label: str
-    method: str          # classmethod(config, calibration) -> message to show
+    method: str          # classmethod(config) -> message to show
     help: str = ""
 
 
@@ -55,8 +52,6 @@ class BaseModule(ABC):
     default_day_start: str = DEFAULT_DAY_START
     settings: Sequence[Field] = ()
     profile_fields: Sequence[Field] = ()
-    steps: Sequence[Step] = ()
-    required_steps: Sequence[str] = ()
     actions: Sequence[ModuleAction] = ()
 
     def __init__(self, context):
@@ -77,18 +72,6 @@ class BaseModule(ABC):
         return self.ctx.browser
 
     @property
-    def vision(self):
-        return self.ctx.vision
-
-    @property
-    def calibration(self):
-        return self.ctx.calibration
-
-    @property
-    def game_state(self):
-        return self.ctx.game_state
-
-    @property
     def config(self):
         return self.ctx.config
 
@@ -98,8 +81,7 @@ class BaseModule(ABC):
         """The module's block of config.json: the two common parameters, then its own."""
         common = [
             Field("enabled", "bool", "Enabled", cls.default_enabled,
-                  "Turns the whole module on or off. A disabled module is not run, and its "
-                  "calibration steps are not required."),
+                  "Turns the whole module on or off. A disabled module is not run."),
             Field("schedule", "choice", "Runs", cls.default_schedule,
                   f"'{SCHEDULE_EVERY_RUN}': each time the application runs. '{SCHEDULE_DAILY}': on the "
                   f"first run of the day for each profile, and not again until tomorrow.",

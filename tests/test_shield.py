@@ -10,11 +10,10 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.settings import AccountConfig, ProfileConfig  # noqa: E402
-from core.calibration import Calibration  # noqa: E402
 from fakes import FakeContext, database, make_config  # noqa: E402
 from modules.chests import game_link  # noqa: E402
 from modules.events.traffic import GameLinkError  # noqa: E402
-from modules.registry import MODULES, step_groups  # noqa: E402
+from modules.registry import MODULES  # noqa: E402
 from modules.shield import ShieldModule  # noqa: E402
 from modules.shield.module import (ACTIVATE_ROUTE, BUY_ROUTE, READ_ROUTE, bought_a_shield,  # noqa: E402
                                    parse_activation, parse_profile_city, parse_shield)
@@ -101,15 +100,13 @@ class ShieldModuleTest(unittest.TestCase):
             ProfileConfig(name="Beta", database=database("clan_b"), account_name="Main"),
         ])])
         self.alpha, self.beta = self.config.accounts[0].profiles
-        self.calibration = Calibration(step_groups(), os.path.join(self.tmp.name, "calibration.json"),
-                                       os.path.join(self.tmp.name, "refs"))
         patch = mock.patch.object(game_link, "GameLink", lambda **_kwargs: self.game)
         patch.start()
         self.addCleanup(patch.stop)
 
     def run_on(self, game):
         self.game = game
-        return ShieldModule(FakeContext(self.config, self.calibration)).run_for_profile(self.alpha)
+        return ShieldModule(FakeContext(self.config)).run_for_profile(self.alpha)
 
     def test_it_is_registered_and_runs_only_where_it_was_turned_on(self):
         self.assertIn(ShieldModule, MODULES)

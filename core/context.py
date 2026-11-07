@@ -11,23 +11,16 @@ from dataclasses import dataclass, field
 from typing import Dict, Optional
 
 from config.settings import AccountConfig, ConfigManager, same_folder
-from modules.registry import calibration_scope, step_groups
 from utils.logger import logger
 
 from .browser import Browser
-from .calibration import Calibration
-from .game_state import GameState
 from .session import LoginManager, ProfileSwitcher
-from .vision import Vision
 
 
 @dataclass
 class RunContext:
     config: ConfigManager
-    calibration: Calibration
     browser: Browser
-    vision: Vision
-    game_state: GameState
     login: LoginManager
     profiles: ProfileSwitcher
     # The other accounts' windows, each with services of its own.
@@ -39,17 +32,12 @@ class RunContext:
                                                                  self.config.chrome_folder_for(account)):
             return self
         if account.name not in self.windows:
-            # A calibration of its own: each window tells it the size of its page.
-            calibration = Calibration(self.calibration.groups, self.calibration.path, self.calibration.refs_dir)
-            self.windows[account.name] = build_context(self.config, calibration, account)
+            self.windows[account.name] = build_context(self.config, account)
         return self.windows[account.name]
 
     def start_browser(self):
         """
-        Opens the browser and tells the calibration which viewport it got.
-
-        The viewport has to be read after the game tab exists: it is the number
-        every calibrated coordinate is rescaled against.
+        Opens the browser for this account's window.
 
         Calling this again on a live connection is a no-op, so a run that
         executes more than one module does not reconnect between them.
@@ -58,38 +46,7 @@ class RunContext:
             return self.browser
 
         self.browser.start()
-        self.sync_viewport()
         return self.browser
-
-    def sync_viewport(self):
-        """
-        Puts the page back to the size it was calibrated at, and tells the
-        calibration what it actually got.
-
-        Resizing is tried first because it removes the problem; rescaling the
-        coordinates only compensates for it, and a game interface does not
-        scale linearly - a rescaled point drifts off a small button and the
-        click lands on nothing.
-        """
-        wanted_w, wanted_h = self.calibration.viewport
-        if wanted_w and wanted_h:
-            width, height = self.browser.viewport()
-            if (width, height) != (wanted_w, wanted_h):
-                logger.info(f"Page is {width}x{height}; resizing to the calibrated {wanted_w}x{wanted_h}...")
-                if self.browser.set_viewport(wanted_w, wanted_h):
-                    logger.info("Window resized: calibrated coordinates are used as they were recorded.")
-                else:
-                    logger.warning(
-                        "Could not restore the calibrated page size; coordinates will be rescaled, "
-                        "which can miss small buttons. Recalibrate at the current size if clicks fail."
-                    )
-
-        width, height = self.browser.viewport()
-        self.calibration.use_viewport(width, height)
-        logger.info(
-            f"Game viewport: {width}x{height} "
-            f"(calibrated at {self.calibration.viewport[0]}x{self.calibration.viewport[1]})"
-        )
 
     def close(self):
         for window in self.windows.values():
@@ -106,13 +63,10 @@ def browser_for(config: ConfigManager, account: AccountConfig) -> Browser:
     return Browser(dict(config.section("browser"), cdp_port=account.cdp_port), config.chrome_folder_for(account))
 
 
-def build_context(config: Optional[ConfigManager] = None, calibration: Optional[Calibration] = None,
-                  account: Optional[AccountConfig] = None) -> RunContext:
-    """The services of one window: the account's, or the first account's for the wizard and the checks."""
+def build_context(config: Optional[ConfigManager] = None, account: Optional[AccountConfig] = None) -> RunContext:
+    """The services of one window: the account's, or the first account's for the checks."""
     config = config or ConfigManager()
     config.pin_windows()
-    calibration = calibration or Calibration(step_groups())
-    calibration.required = calibration_scope(config)
 
     if account is None:
         account = next(iter(config.enabled_accounts() or config.accounts), None)
@@ -121,16 +75,10 @@ def build_context(config: Optional[ConfigManager] = None, calibration: Optional[
                           os.path.join(config.profiles_dir(), "default"))
     else:
         browser = browser_for(config, account)
-    vision = Vision(browser, config.section("vision"))
-    timing = config.section("timing")
-    game_state = GameState(browser, vision, calibration, timing)
 
     return RunContext(
         config=config,
-        calibration=calibration,
         browser=browser,
-        vision=vision,
-        game_state=game_state,
         login=LoginManager(browser, config.section("login")),
         profiles=ProfileSwitcher(browser),
     )

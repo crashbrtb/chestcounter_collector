@@ -1,36 +1,24 @@
 """Brings over what the standalone EventUploader saved on this computer.
 
 The uploader kept its files in `%APPDATA%\\EventUploader` (`~/.config/EventUploader`
-on Linux): the Journal calibration, every player name it had seen, and the
-tournaments it had already sent. All three are worth keeping - the first saves
-calibrating twelve steps again, the other two keep names on old rankings and
-keep a tournament from being sent twice.
+on Linux): every player name it had seen, and the tournaments it had already sent.
+Both are worth keeping - they keep names on old rankings and keep a tournament
+from being sent twice.
 
-Nothing already here is replaced: a step that is calibrated stays as it is, and
-the histories are merged. The token is not brought over: the uploader kept it
-in the system's credential vault, and here each profile has its own.
+Nothing already here is replaced: the histories are merged. The token is not
+brought over: the uploader kept it in the system's credential vault, and here
+each profile has its own.
 """
 from __future__ import annotations
 
 import json
 import os
-import shutil
 import sys
 from pathlib import Path
 from typing import List
 
 from .api import normalize_site_url
 from .store import SentHistory, profile_cache_path
-
-# The uploader's step names, and what they are called among everyone's steps here.
-STEP_NAMES = {
-    "journal_button": "journal_button",
-    "events_tab": "journal_events_tab",
-    "card1_title": "journal_card1_title",
-    "card2_title": "journal_card2_title",
-    "card_icon": "journal_card_icon",
-    "next_page": "journal_next_page",
-}
 
 
 def legacy_dir() -> Path:
@@ -49,57 +37,6 @@ def _read_json(path: Path) -> dict:
     except (OSError, ValueError):
         return {}
     return data if isinstance(data, dict) else {}
-
-
-def _import_calibration(folder: Path, calibration, config, notes: List[str]) -> None:
-    data = _read_json(folder / "calibracao_journal.json")
-    if not data:
-        notes.append("No Journal calibration found there.")
-        return
-
-    stored = data.get("viewport") or {}
-    viewport = (int(stored.get("width", 0)), int(stored.get("height", 0)))
-    step_viewports = data.get("step_viewports") or {}
-    imported, kept = [], []
-    for old, new in STEP_NAMES.items():
-        point, region = (data.get("points") or {}).get(old), (data.get("regions") or {}).get(old)
-        if point is None and region is None:
-            continue
-        if calibration.is_calibrated(new):
-            kept.append(new)
-            continue
-        if point is not None:
-            calibration.points[new] = (int(point[0]), int(point[1]))
-        else:
-            calibration.regions[new] = {k: int(region[k]) for k in ("left", "top", "width", "height")}
-            reference = folder / "calibracao_refs" / f"{old}.png"
-            if reference.exists():
-                os.makedirs(calibration.refs_dir, exist_ok=True)
-                shutil.copyfile(reference, calibration.ref_path(new))
-        recorded_at = step_viewports.get(old) or list(viewport)
-        if recorded_at and recorded_at[0] and recorded_at[1]:
-            calibration.step_viewports[new] = (int(recorded_at[0]), int(recorded_at[1]))
-        imported.append(new)
-
-    if imported:
-        if not (calibration.viewport[0] and calibration.viewport[1]):
-            calibration.set_viewport(*viewport)
-        calibration.save()
-        notes.append(f"Calibration: {len(imported)} Journal step(s) imported.")
-        if viewport != tuple(calibration.viewport) and all(viewport):
-            notes.append(
-                f"  ⚠ They were recorded with the page at {viewport[0]}x{viewport[1]} and this calibration "
-                f"is at {calibration.viewport[0]}x{calibration.viewport[1]}: they are rescaled, which can "
-                f"miss small buttons. Open the calibration and use 'Test this step' on each Journal step, "
-                f"redoing the ones that miss."
-            )
-    if kept:
-        notes.append(f"Calibration: {len(kept)} step(s) already calibrated here were left as they are.")
-
-    cards = data.get("cards_per_page")
-    if isinstance(cards, int) and cards > 0:
-        config.set("modules.events", "cards_per_page", cards)
-        config.save()
 
 
 def _import_profiles(folder: Path, notes: List[str]) -> None:
@@ -135,14 +72,13 @@ def _import_sent(settings: dict, notes: List[str]) -> None:
     )
 
 
-def import_eventuploader(config, calibration) -> str:
+def import_eventuploader(config=None) -> str:
     """Imports everything found; returns what was done, one line per item."""
     folder = legacy_dir()
     if not folder.is_dir():
         return f"Nothing to import: {folder} does not exist on this computer."
 
     notes: List[str] = []
-    _import_calibration(folder, calibration, config, notes)
     _import_profiles(folder, notes)
     _import_sent(_read_json(folder / "config.json"), notes)
     return "\n".join(notes) if notes else f"Nothing new to import from {folder}."

@@ -1,5 +1,4 @@
-"""The Journal walk against a simulated game: a feed answering as the real one, and a screen for the pictures."""
-import base64
+"""The Journal walk against a simulated game: a feed answering as the real one."""
 import os
 import sys
 import unittest
@@ -10,7 +9,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from modules.events import journal, mapper, tbcodec  # noqa: E402
 from modules.events.feed import ANSWER_KEY, build_call, parse_answer  # noqa: E402
-from modules.events.screen import CardPicture  # noqa: E402
 from modules.events.traffic import GameLinkError  # noqa: E402
 from utils.cancel import cancellation  # noqa: E402
 
@@ -68,21 +66,15 @@ class FakeFeed:
         collector.feed_tree({"frames": [{"route": journal.PROFILES_ROUTE, "objects": [[rows]]}]})
 
 
-def walk(feed, known=lambda _t: "", options=None, camera=lambda: CardPicture(b"page", b"icon"), has_picture=lambda _t: False):
-    """(the mapper after its run, the places of the Journal pictured)."""
-    pictured = []
-
-    def take_picture(page, card):
-        pictured.append((page, card))
-        return camera()
-
+def walk(feed, known=lambda _t: "", options=None):
+    """The mapper after its run."""
     logs = []
     runner = mapper.JournalMapper(feed, journal.JournalCollector(), options or mapper.MapperOptions(interval=0),
-                                  known_name=known, take_picture=take_picture, has_picture=has_picture, on_log=logs.append)
+                                  known_name=known, on_log=logs.append)
     runner.logs = logs
     with mock.patch.object(cancellation, "sleep", lambda _seconds: None):
         runner.run()
-    return runner, pictured
+    return runner
 
 
 class CallTest(unittest.TestCase):
@@ -105,18 +97,17 @@ class WalkTest(unittest.TestCase):
         entries = [ranking_entry(1, NOW), other_entry(2, NOW - 1), ranking_entry(3, NOW - 2, clan=0),
                    ranking_entry(4, NOW - 3), other_entry(5, NOW - 4)]
         feed = FakeFeed(entries)
-        runner, read = walk(feed, known=self.named)
+        runner = walk(feed, known=self.named)
 
         self.assertEqual([uid(5001), uid(5004)], feed.asked_rankings, "not the player's own world ranking")
         self.assertEqual(mapper.FINISH_END, runner.finish_reason)
-        self.assertEqual([], read, "every type is known: the screen is not touched")
         self.assertEqual({mapper.STATUS_MAPPED}, {c.status for c in runner.cards})
         self.assertEqual(["Player 1001", "Player 1002"],
                          [r.name for r in runner.collector.tournaments()[0].rows])
 
     def test_the_names_are_asked_for_once_and_only_those_missing(self):
         feed = FakeFeed([ranking_entry(1, NOW), ranking_entry(2, NOW - 1)], names={1001: "Lion"})
-        runner, _read = walk(feed, known=self.named)
+        runner = walk(feed, known=self.named)
 
         self.assertEqual([[1001, 1002]], feed.asked_profiles)
         self.assertEqual([1, 1], [c.unnamed for c in runner.cards], "the game does not know one of them")
@@ -124,7 +115,7 @@ class WalkTest(unittest.TestCase):
     def test_it_stops_at_the_last_search(self):
         entries = [ranking_entry(1, NOW), other_entry(2, NOW - 100), ranking_entry(3, NOW - 200)]
         feed = FakeFeed(entries)
-        runner, _ = walk(feed, known=self.named, options=mapper.MapperOptions(interval=0, stop_before=NOW - 50))
+        runner = walk(feed, known=self.named, options=mapper.MapperOptions(interval=0, stop_before=NOW - 50))
 
         self.assertEqual(mapper.FINISH_CUTOFF, runner.finish_reason)
         self.assertEqual([uid(5001)], feed.asked_rankings)
@@ -133,7 +124,7 @@ class WalkTest(unittest.TestCase):
         now = int(datetime.now().timestamp())
         entries = [ranking_entry(1, now), ranking_entry(2, now - 5 * DAY), ranking_entry(3, now - 6 * DAY)]
         feed = FakeFeed(entries)
-        runner, _ = walk(feed, known=self.named, options=mapper.MapperOptions(interval=0, max_age_days=2))
+        runner = walk(feed, known=self.named, options=mapper.MapperOptions(interval=0, max_age_days=2))
 
         self.assertEqual(mapper.FINISH_DAYS, runner.finish_reason)
         self.assertEqual([uid(5001)], feed.asked_rankings)
@@ -141,7 +132,7 @@ class WalkTest(unittest.TestCase):
     def test_a_ranking_that_does_not_come_is_counted_and_the_walk_goes_on(self):
         feed = FakeFeed([ranking_entry(1, NOW), ranking_entry(2, NOW - 1)])
         feed.failing = {uid(5001)}
-        runner, _ = walk(feed, known=self.named)
+        runner = walk(feed, known=self.named)
 
         self.assertEqual([mapper.STATUS_NO_ANSWER, mapper.STATUS_MAPPED], [c.status for c in runner.cards])
         self.assertEqual(mapper.FINISH_END, runner.finish_reason)
@@ -149,7 +140,7 @@ class WalkTest(unittest.TestCase):
     def test_a_game_that_keeps_failing_ends_the_walk_as_not_complete(self):
         feed = FakeFeed([ranking_entry(n, NOW - n) for n in range(1, 8)], per_request=10)
         feed.failing = {uid(5000 + n) for n in range(1, 8)}
-        runner, _ = walk(feed, known=self.named)
+        runner = walk(feed, known=self.named)
 
         self.assertEqual(mapper.MAX_FAILURES, len(feed.asked_rankings))
         self.assertNotIn(runner.finish_reason, mapper.COMPLETE_REASONS)
@@ -158,26 +149,26 @@ class WalkTest(unittest.TestCase):
         entries = [ranking_entry(n, NOW - n) for n in range(1, 6)]
         feed = FakeFeed(entries)
         feed.cut_at = entries[2][2]
-        runner, _ = walk(feed, known=self.named)
+        runner = walk(feed, known=self.named)
 
         self.assertEqual(mapper.FINISH_NO_JOURNAL, runner.finish_reason)
         self.assertEqual(3, len(runner.cards), "what was read before stays")
 
     def test_a_kind_nobody_reads_is_pointed_out_once(self):
         feed = FakeFeed([other_entry(1, NOW, "new_clan_war_statistics"), other_entry(2, NOW - 1, "new_clan_war_statistics")])
-        runner, _ = walk(feed)
+        runner = walk(feed)
         self.assertEqual(1, sum("new_clan_war_statistics" in text for text in runner.logs))
 
     def test_an_answer_in_an_unknown_shape_says_so(self):
         feed = FakeFeed([ranking_entry(1, NOW)])
         detail = tbcodec.pack(["multistage_tournament_results_entry", [1040, 1], [[1, 2, 3]]])
         feed.ranking = lambda _entry, result: [[{result: [detail, True]}]]
-        runner, _ = walk(feed, known=self.named)
+        runner = walk(feed, known=self.named)
         self.assertIn(mapper.STATUS_UNKNOWN_FORMAT, runner.cards[0].status)
 
 
 class NewTypeTest(unittest.TestCase):
-    """A type the catalogue has no name for is pictured where its card is, and its rankings wait for a name."""
+    """A type the catalogue has no name for is told to the catalogue, and its rankings wait for a name."""
 
     def setUp(self):
         self.options = mapper.MapperOptions(interval=0, cards_per_page=2)
@@ -188,51 +179,31 @@ class NewTypeTest(unittest.TestCase):
     def known_but(self, *unknown):
         return lambda t: "" if t.tournament_key.split(":")[0] in unknown else "Known"
 
-    def test_the_card_of_a_new_type_is_pictured_once_and_all_of_it_waits(self):
-        runner, pictured = walk(FakeFeed(self.entries), self.known_but("1040"), self.options)
+    def test_the_first_card_of_a_new_type_goes_to_the_catalogue_and_all_of_it_waits(self):
+        runner = walk(FakeFeed(self.entries), self.known_but("1040"), self.options)
 
-        self.assertEqual([(1, 1)], pictured, "the 4th entry is the 2nd card of the 2nd page")
         self.assertEqual([mapper.STATUS_NO_NAME, mapper.STATUS_NO_NAME, mapper.STATUS_MAPPED],
                          [c.status for c in runner.cards])
         [entry] = mapper.catalogue_entries(runner.cards)
         self.assertEqual("1040:1", entry["tournament_key"])
         self.assertNotIn("name", entry)
-        self.assertEqual((base64.b64encode(b"page").decode(), base64.b64encode(b"icon").decode()),
-                         (entry["picture"], entry["image"]))
+        self.assertNotIn("picture", entry)
+        self.assertNotIn("image", entry)
 
-    def test_each_new_type_is_pictured_on_its_own(self):
-        runner, pictured = walk(FakeFeed(self.entries), self.known_but("1040", "1050"), self.options)
+    def test_each_new_type_is_told_on_its_own(self):
+        runner = walk(FakeFeed(self.entries), self.known_but("1040", "1050"), self.options)
 
-        self.assertEqual([(1, 1), (2, 1)], pictured)
         self.assertEqual(["1040:1", "1050:1"], [e["tournament_key"] for e in mapper.catalogue_entries(runner.cards)])
 
-    def test_a_type_whose_picture_is_on_the_site_needs_no_other(self):
-        runner, pictured = walk(FakeFeed(self.entries), self.known_but("1040"), self.options, has_picture=lambda _t: True)
-
-        self.assertEqual([], pictured)
-        self.assertEqual(mapper.STATUS_NO_NAME, runner.cards[0].status)
-        self.assertNotIn("picture", mapper.catalogue_entries(runner.cards)[0])
-
-    def test_a_screen_that_could_not_look_still_tells_the_site_and_is_tried_twice(self):
-        runner, pictured = walk(FakeFeed(self.entries), self.known_but("1040"), self.options, camera=lambda: None)
-
-        self.assertEqual([(1, 1), (1, 1)], pictured)
-        self.assertEqual(mapper.STATUS_NO_NAME, runner.cards[0].status)
-        [entry] = mapper.catalogue_entries(runner.cards)
-        self.assertNotIn("picture", entry)
-
-    def test_a_new_entry_moves_the_places_so_nothing_is_pictured(self):
+    def test_waiting_for_a_name_asks_the_game_for_nothing_more(self):
         feed = FakeFeed(self.entries)
+        asked = []
         real = feed.journal_page
+        feed.journal_page = lambda cursor=None, size=None: asked.append(size) or real(cursor, size)
 
-        def page(cursor=None, size=None):
-            return [other_entry(99, NOW + 1)] if size == 1 else real(cursor, size)
+        walk(feed, self.known_but("1040"), self.options)
 
-        feed.journal_page = page
-        runner, pictured = walk(feed, self.known_but("1040"), self.options)
-
-        self.assertEqual([], pictured)
-        self.assertEqual(mapper.STATUS_NO_NAME, runner.cards[0].status)
+        self.assertNotIn(1, asked, "no second look at the top of the list")
 
 
 if __name__ == "__main__":

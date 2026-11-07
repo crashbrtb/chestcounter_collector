@@ -18,11 +18,10 @@ REM      run.bat                 runs every enabled module that is due: the ches
 REM                              each time, the tournament rankings once a day
 REM                              (what Task Scheduler should call)
 REM      run.bat config          opens the configuration interface
-REM      run.bat calibrate       opens the calibration wizard directly
-REM      run.bat check           validates configuration and calibration only
+REM      run.bat check           validates configuration only
 REM
 REM  Exit codes (seen in Task Scheduler's "Last Run Result"):
-REM      0 = all done         1 = failure    2 = configuration/calibration issue
+REM      0 = all done         1 = failure    2 = configuration issue
 REM      3 = cancelled
 REM ==============================================================================
 
@@ -44,8 +43,6 @@ set "MODE=%~1"
 
 if /i "%MODE%"=="config"    goto :gui
 if /i "%MODE%"=="gui"       goto :gui
-if /i "%MODE%"=="calibrate" goto :calibrate
-if /i "%MODE%"=="calibrar"  goto :calibrate
 if /i "%MODE%"=="check"     goto :check
 if /i "%MODE%"=="verificar" goto :check
 goto :collect
@@ -55,12 +52,6 @@ call :check_interface
 if errorlevel 1 exit /b 2
 REM pythonw: the interface doesn't need a console window behind it.
 start "" "%PYTHONW_EXE%" "%~dp0main.py" --gui
-exit /b 0
-
-:calibrate
-call :check_interface
-if errorlevel 1 exit /b 2
-start "" "%PYTHONW_EXE%" "%~dp0main.py" --calibrate
 exit /b 0
 
 :check_interface

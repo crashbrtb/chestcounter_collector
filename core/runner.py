@@ -21,8 +21,8 @@ that fails on a profile does not stop the next module, a profile that fails is
 retried, then abandoned with a reason recorded, and the run moves on. An account
 that cannot be logged into loses its profiles but not the rest of the run.
 `execution.stop_on_error` turns that off for anyone who would rather have the
-run halt. A module that cannot work at all (its screens were never calibrated,
-say) is left out of the run and reported, and the others go on without it.
+run halt. A module that cannot work at all (its preflight says why) is left
+out of the run and reported, and the others go on without it.
 """
 
 import threading
@@ -153,16 +153,6 @@ class ModuleRunner:
         problems += self.ctx.config.window_problems()
         problems += self.ctx.config.database_problems()
 
-        # Works with or without the browser open: with it, against the live page
-        # size; without it, against the size the calibration was recorded at.
-        outside = self.ctx.calibration.out_of_bounds()
-        if outside:
-            problems.append(
-                f"These calibration steps fall OUTSIDE the page and clicks will hit nothing: "
-                f"{self.ctx.calibration.titles(outside)}. Redo them in the wizard, with the window "
-                f"at your normal running size."
-            )
-
         return problems
 
     def module_problems(self, module: BaseModule, accounts: Optional[List[AccountConfig]] = None) -> List[str]:
@@ -170,13 +160,7 @@ class ModuleRunner:
         if accounts is None:
             accounts = self.ctx.config.enabled_accounts()
         every = [profile for account in accounts for profile in account.active_profiles]
-        problems = list(module.preflight(every))
-        if any(module.configured_for(profile) for profile in every):
-            missing = self.ctx.calibration.require(*module.required_steps)
-            if missing:
-                problems.append(f"Incomplete calibration for '{module.title}'. Missing steps: "
-                                f"{self.ctx.calibration.titles(missing)}.")
-        return problems
+        return list(module.preflight(every))
 
     def preflight(self) -> List[str]:
         """Everything that would make the run pointless or partial, for --check and the interface."""
@@ -404,7 +388,6 @@ class ModuleRunner:
             )
             try:
                 context.browser.restart()
-                context.sync_viewport()
             except Exception as exc:  # noqa: BLE001
                 logger.error(f"Could not restart the browser: {exc}")
                 self._record_failure(account, None, f"{reason}; browser restart failed: {exc}")

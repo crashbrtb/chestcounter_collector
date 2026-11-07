@@ -3,10 +3,6 @@ config/config.json
 position.cfg
 config.cfg
 
-# Calibration: screen positions calibrated on this machine
-config/calibration.json
-config/calib_refs/
-
 # What the modules remember between runs: when each one last ran, the players'
 # names and the tournaments already sent to each clan site
 config/module_state.json

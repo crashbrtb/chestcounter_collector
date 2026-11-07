@@ -12,15 +12,12 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.settings import AccountConfig, ProfileConfig  # noqa: E402
-from core.calibration import Calibration  # noqa: E402
 from core.runner import ModuleRunner  # noqa: E402
-from fakes import SITE_A, SITE_B, Clock, FakeContext, database, make_calibration, make_config, make_schedule  # noqa: E402
+from fakes import SITE_A, SITE_B, Clock, FakeContext, database, make_config, make_schedule  # noqa: E402
 from modules.events import EventsModule, api, legacy  # noqa: E402
 from modules.events import feed as events_feed  # noqa: E402
 from modules.events import module as events_module  # noqa: E402
-from modules.events.layout import JournalLayout  # noqa: E402
 from modules.events.store import SearchMemory, SentHistory  # noqa: E402
-from modules.registry import step_groups  # noqa: E402
 from test_events_autosend import FakeSite  # noqa: E402
 from test_events_mapper import FakeFeed, ranking_entry, uid  # noqa: E402
 from utils.cancel import cancellation  # noqa: E402
@@ -39,7 +36,6 @@ class EventsModuleTest(unittest.TestCase):
             ProfileConfig(name="Gamma", database=database("clan_c"), account_name="Main"),
         ])])
         self.config.set("modules.chests", "enabled", False)
-        self.calibration = make_calibration(folder, self.config)
         self.sites = {SITE_A["site_url"]: FakeSite(), SITE_B["site_url"]: FakeSite()}
         for site in self.sites.values():
             site.known_tournaments = lambda: [{"game_type": 1024, "ranking": "", "name": "Rise of the Ancients"}]
@@ -88,7 +84,7 @@ class EventsModuleTest(unittest.TestCase):
 
     def context(self, tournaments):
         """A context whose game is the feed: `tournaments` is profile -> the entry number of its ranking."""
-        ctx = FakeContext(self.config, self.calibration)
+        ctx = FakeContext(self.config)
         test = self
 
         class Switcher(type(ctx.profiles)):
@@ -143,7 +139,7 @@ class EventsModuleTest(unittest.TestCase):
         original = events_module.autosend.AutoSearch
 
         def search(*args, **kwargs):
-            seen.append((args[4].max_age_days, kwargs["use_site_cutoff"]))
+            seen.append((args[3].max_age_days, kwargs["use_site_cutoff"]))
             return original(*args, **kwargs)
 
         with mock.patch.object(events_module.autosend, "AutoSearch", search):
@@ -182,52 +178,33 @@ class EventsModuleTest(unittest.TestCase):
         profile = ProfileConfig(name="Half", account_name="Main", modules={"events": {"site_url": "x.example.com"}})
         self.assertFalse(EventsModule.configured_for(profile))
         self.assertIn("token missing", EventsModule.profile_summary(profile))
-        module = EventsModule(FakeContext(self.config, self.calibration))
+        module = EventsModule(FakeContext(self.config))
         self.assertEqual(1, len(module.preflight([profile])))
         self.assertEqual((False, "Fill in the clan site address."), EventsModule.test_profile({}))
 
 
 class LegacyImportTest(unittest.TestCase):
-    def test_brings_the_uploaders_calibration_names_and_history_without_replacing_anything(self):
+    def test_brings_the_uploaders_names_and_history_without_replacing_anything(self):
         with tempfile.TemporaryDirectory() as tmp:
             old = Path(tmp) / "EventUploader"
-            (old / "calibracao_refs").mkdir(parents=True)
-            (old / "calibracao_refs" / "show_details.png").write_bytes(b"png")
-            (old / "calibracao_journal.json").write_text(json.dumps({
-                "viewport": {"width": 1536, "height": 695}, "cards_per_page": 4,
-                "points": {"journal_button": [40, 600], "next_page": [900, 650]},
-                "regions": {"card1_title": {"left": 300, "top": 100, "width": 500, "height": 30},
-                            "card2_title": {"left": 300, "top": 190, "width": 500, "height": 30},
-                            "show_details": {"left": 600, "top": 500, "width": 160, "height": 40}},
-                "step_viewports": {"journal_button": [1536, 695]},
-            }), encoding="utf-8")
+            old.mkdir(parents=True)
             (old / "perfis_jogadores.json").write_text(json.dumps(
                 {"profiles": {"1001": {"name": "Lion", "power": 5, "clan_tag": "KOK"}}}), encoding="utf-8")
             (old / "config.json").write_text(json.dumps(
                 {"site_url": "https://clan-a.example.com", "sent": {UID_A: {"event_number": 3}}}), encoding="utf-8")
 
             config = make_config(tmp)
-            calibration = Calibration(step_groups(), os.path.join(tmp, "calibration.json"), os.path.join(tmp, "refs"))
-            calibration.set_viewport(1536, 731)
-            calibration.set_point("journal_next_page", 1, 2)      # already calibrated here: kept
             data = os.path.join(tmp, "data")
             with mock.patch.object(legacy, "legacy_dir", lambda: old), \
                     mock.patch.object(legacy, "profile_cache_path", lambda: os.path.join(data, "players.json")), \
                     mock.patch.object(legacy, "SentHistory", lambda site: SentHistory(site, data)):
-                report = legacy.import_eventuploader(config, calibration)
-                again = legacy.import_eventuploader(config, calibration)
+                report = legacy.import_eventuploader(config)
+                again = legacy.import_eventuploader(config)
 
-            self.assertEqual((40, 600), calibration.points["journal_button"])
-            self.assertEqual((1, 2), calibration.points["journal_next_page"])
-            self.assertEqual((1536, 695), calibration.step_viewports["journal_button"])
-            self.assertEqual(4, config.module("events")["cards_per_page"])
-            self.assertEqual(190 - 100, JournalLayout(calibration).card_pitch())
             self.assertEqual(3, SentHistory("https://clan-a.example.com", data).info(UID_A)["event_number"])
             self.assertIn("1001", json.loads(Path(data, "players.json").read_text(encoding="utf-8"))["profiles"])
-            self.assertIn("3 Journal step(s) imported", report)
-            self.assertIn("1536x695", report, "a different page size is pointed out")
             self.assertIn("token is not imported", report)
-            self.assertNotIn("imported.", again.split("The uploader")[0].replace("left as they are", ""))
+            self.assertNotIn("imported.", again.split("The uploader")[0])
 
 
 if __name__ == "__main__":

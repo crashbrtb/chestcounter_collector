@@ -6,9 +6,10 @@ MySQL/MariaDB database. The web reporting and query interface remains
 
 Version 2.0 rebuilt the foundation of the application: the game now runs in
 **Chrome controlled via CDP** instead of the desktop client, each **account has
-its own login and password** along with its profiles, and there are no longer
-hand-written coordinates — everything is calibrated by clicking directly on the
-screen and configured through a graphical interface.
+its own login and password** along with its profiles, and everything is
+configured through a graphical interface. Every module talks to the
+game **over the network**, from inside the game's own tab: nothing is clicked,
+nothing is read off the screen, and there is no calibration.
 
 The application is made of **modules**, each one a job done on a profile of the
 game. Four exist today, and the structure is there for more:
@@ -43,13 +44,11 @@ Double-click to run without needing a command prompt:
 | File | Description |
 |---|---|
 | **`Configure.bat`** | Opens the interface: modules, accounts, profiles, databases, and all parameters |
-| **`Calibrate.bat`** | Opens the calibration wizard directly |
 | **`Check_Environment.bat`** | Quick diagnostic check for Python and its libraries |
 | `run.bat` | Runs every enabled module that is due. **This is what Windows Task Scheduler should call.** |
 
-The first two are shortcuts for `run.bat`, which also accepts `run.bat config`,
-`run.bat calibrate`, and `run.bat check` (verifies configuration and calibration
-without running anything) for command-line users.
+`Configure.bat` is a shortcut for `run.bat config`; `run.bat check` verifies the
+configuration without running anything.
 
 From a command prompt, `main.py` takes a few more options: `--module chests`
 (or `shield`, `members`, `events`; may be repeated) runs only that module, `--force` ignores the
@@ -57,7 +56,7 @@ schedule so a once-a-day module runs again, and `--account` / `--profile`
 restrict the run to one of them.
 
 Exit codes (visible in *Last Run Result* in Windows Task Scheduler):
-`0` all done · `1` failures occurred · `2` incomplete configuration/calibration ·
+`0` all done · `1` failures occurred · `2` incomplete configuration ·
 `3` cancelled.
 
 **To cancel an ongoing run, hold ESC** for a moment — from any window, even with
@@ -103,13 +102,12 @@ silently, and a heartbeat that cannot be written never stops the collection.
 The **Modules** tab of the interface has one card per module, with the same two
 controls on each — **Enabled** and **Runs** (*every run* or *once a day*) —
 followed by that module's own parameters, and a status line saying how many
-profiles are set up for it, whether its screens are calibrated and when it last
-ran.
+profiles are set up for it and when it last ran.
 
 A run visits each account and each profile once, and on each profile does the
 modules that are enabled, set up for that profile, and due. The modules are
-independent: one that fails does not stop the next, one whose screens were never
-calibrated is left out of the run (and reported) while the others go on.
+independent: one that fails does not stop the next, and one that cannot work at
+all is left out of the run (and reported) while the others go on.
 
 **Once a day** means *one successful run per profile per day*. A run that fails
 is tried again on the next start of the same day, up to *Attempts per day*
@@ -124,8 +122,7 @@ on every profile set up for it, ignoring the schedule and the *Enabled* switch
 ### Clan chests
 
 Runs on every profile that has a **database**. It talks to the game over the
-network, from inside the game's own tab; the screen is only pictured for a chest
-type met for the first time:
+network, from inside the game's own tab:
 
 1. the player, the session and the server's address are learned from the requests
    the game itself keeps sending; the session stays in memory and is never logged
@@ -136,24 +133,26 @@ type met for the first time:
 4. the list is asked for again: a gift that is still there untouched was not opened,
    so what was written for it is taken back, and whatever arrived meanwhile is
    collected too;
-5. if chests of an unnamed type are left, the gifts panel is opened, scrolled to the
-   first of them and read; the type is registered in `game_chest_types`, and the
-   collection goes on over the network, now knowing it. Then the next type.
+5. a chest type the database does not know is looked up in the game's own chest
+   catalogue (its static data, cached in `config/module_data/chests/` and
+   downloaded from the game's CDN only when the game publishes a new build); the
+   type is registered in `game_chest_types` and its chests are collected in the
+   same run.
 
 | Field | Where it comes from |
 |---|---|
 | Player | the player's id; named by `members.game_player_id`, or by the game itself when the site does not know the id |
-| Chest and source | the type id; named by `game_chest_types`, or by the chests already written with that type when they all agree |
+| Chest and source | the type id; named by `game_chest_types`, or by the game's chest catalogue |
 | Generation time | expiry to the second, minus the chest's twenty hours |
 
-- **A new type** is named by a person, not read. Its chests are opened and filed in
-  the site's *Incomplete Chests* queue with their code, player and date, the first
-  with a picture of the panel. Naming one there names the type: its other pending
-  chests are recorded with it, and the next ones are collected normally. A type that
-  cannot be pictured stays in the game for the next run, and the run is reported as
-  not finished. A gift with less than an hour to live goes to the queue without one.
-- **The calibration** of the gifts panel (*Clan button* to *Open button*) is only
-  used for that picture. Without it the known chests are collected all the same.
+- **A type missing from the catalogue** stays in the game for the next run, and the
+  run is reported as not finished. A gift of such a type with less than an hour to
+  live is opened and filed in the site's *Incomplete Chests* queue with its code,
+  player and date, for a person to name.
+- `tools/fix_chest_types.py` corrects, from the catalogue, chests already written
+  with a wrong type.
+
+### Clan members
 
 One reading, for one profile:
 
@@ -169,9 +168,6 @@ The result is kept per clan in `config/module_data/members/`, replaced at each
 reading: `<TAG>_<clan id>.json` and the same rows as a `.csv` that opens in a
 spreadsheet (`player_id, name, power, rank, rank_name, level, kingdom, x, y`).
 Ranks are the game's own: 1 Leader, 2 Superior, 3 Officer, 4 Veteran, 5 Soldier.
-
-It needs two calibration steps besides the *Clan button*: *Clan:
-Members* (the menu entry) and, optionally, *Clan: members list*.
 
 **To the clan site.** With *Send the list to the clan site* on (the default), a
 profile that has a clan site address and token — the ones the tournament module
@@ -226,13 +222,11 @@ One search, for one profile:
 3. each card of the clan's results has its ranking asked for, and the players
    without a name have their profiles asked for;
 4. the game sends a tournament's type but never its name. The site's catalogue
-   names the types it knows. A new one is told to the catalogue with a picture of the
-   Journal page, its card outlined (the only use of the calibration). It shows up on
-   the site under *Admin › Events › Pending Tournaments*, for a person to name. Its
-   rankings wait: the search is reported as not complete, and the first one after the
-   naming sends them. Name it within *Days to look back*, or raise that setting, since
-   a search walks no further back than that. A card far down the Journal costs a click
-   per page, 1.2 s each;
+   names the types it knows. A new one is told to the catalogue, nameless, and shows
+   up on the site under *Admin › Events › Pending Tournaments*, for a person to name.
+   Its rankings wait: the search is reported as not complete, and the first one after
+   the naming sends them. Name it within *Days to look back*, or raise that setting,
+   since a search walks no further back than that;
 5. the site is asked which of those tournaments it already has, and the rest
    are sent. A ranking where every player has a name is published right away;
    the others stay as drafts for review on the site;
@@ -243,13 +237,7 @@ Nothing is sent twice: the site keeps one event per game result, a published
 one is never sent again, and locally a ranking that did not change since it was
 sent is skipped (`config/module_data/events/`).
 
-**Coming from the standalone EventUploader?** The *Import from EventUploader*
-button on the module's card brings over its Journal calibration, the players'
-names it had collected and the list of tournaments it had already sent. The
-token is not imported (it lives in the Windows Credential Manager): paste it on
-the profile. If the Journal was calibrated at a different window size than the
-chests, the import says so — check each Journal step with *Test this step*.
-Once this module is running, disable the uploader's own scheduled task
+**Coming from the standalone EventUploader?** Paste the site token on the profile, then disable the uploader's own scheduled task
 (`BuscarTorneios`): two programs driving the same game would get in each other's way.
 
 ### Adding a module
@@ -262,13 +250,12 @@ It subclasses `BaseModule` (`modules/base_module.py`) and declares:
 | `key`, `title`, `description` | its card in the Modules tab, its block in `config.json` |
 | `settings` (a list of `Field`) | its parameters on that card, validated and saved |
 | `profile_fields` | its fields in each profile's *Modules…* dialog |
-| `steps`, `required_steps` | its own group of steps in the calibration wizard |
 | `default_schedule` | every run, or once a day |
 | `run_for_profile(profile)` | called with the game already logged in and on that profile |
 
-Nothing else needs to change: the interface, the configuration file, the
-wizard and the run are all built from the registry. `modules/chat_automator.py`
-is the smallest example (it is not registered).
+Nothing else needs to change: the interface, the configuration file and the
+run are all built from the registry. `modules/shield/module.py` is the smallest
+example.
 
 ---
 
@@ -337,71 +324,24 @@ button, and logged-in confirmation selector.
 
 ---
 
-## Calibration
-
-The calibration wizard (`Calibrate.bat`) captures a screenshot of the page via
-CDP, allowing you to mark controls by **clicking on the picture** while a
-magnifier follows your cursor. The recorded coordinates are native page pixels:
-independent of window position and Windows display scaling.
-
-There is **one calibration for every module**. The steps all modules depend on
-come first (the store), then each
-module's own steps under its name. A step is known by its name, so a point two
-modules need is calibrated once. Only the steps of the modules in use are
-required; the others can be left for when the module is set up.
-
-Captures compensate for **Windows display scaling**: Chrome renders screenshots
-at `devicePixelRatio` (at 125%, a 1536 px page yields a 1920 px image), but
-click events use CSS pixels. Captures are requested pre-compensated so the exact
-pixel clicked on the image **matches** the click target in the browser — without
-this, points would be scaled by 1.25x and miss their targets.
-
-- **point** — single click coordinate (clan button, gifts tab...)
-- **area** — rectangle region (where to search for text or buttons)
-- **region with reference** — rectangle *and* an image crop, later searched
-  on screen; this allows finding the "Open" button even when its position shifts.
-
-**Calibrate with the window sized as it will be during automated runs.** Each
-step records the viewport size it was calibrated on. If window dimensions change,
-coordinates are scaled accordingly, but the wizard will warn if any point falls
-out of bounds — clicks outside the page boundary hit nothing and behave like
-unresponsive buttons.
-
-The **🔎 Test this step** button exercises the step live in the running game and
-**measures** results: for clicks, it compares before and after screenshots and
-reports *"clicked (x, y) and screen changed 13%"* or *"screen DID NOT change: click
-hit empty space"*; for areas, it asks you to check the capture; for reference
-images, it reports whether the template was matched and with what similarity score.
-
-**Advance automatically** also performs the step. A step that marks a button
-presses it, waits, takes a fresh capture and only then opens the next step, so
-the game arrives at the screen that step describes instead of being left a screen
-behind. If the click changes nothing the wizard stays where it is and says so.
-Steps that only mark an area to read have nothing to press.
-
-Each step can be recalibrated individually without redoing the entire sequence.
-The first two steps (store detection and close button) are optional and come
-first because the store is what covers everything else — the game opens it by
-itself, and closing it is what clears the screen for the rest of the sequence.
-
----
-
 ## Error Handling & Problem Tracking
 
 Issues are categorized and routed to two destinations:
 
-**Data Issues** — a chest that could not be read cleanly. Saved to
-`incomplete_chests` along with a screen capture, to be reviewed by an
-administrator in the web interface.
+**Data Issues** — a chest with something missing (its type's name or its
+player's). Saved to `incomplete_chests` with what is known and the game's ids, to
+be reviewed by an administrator in the web interface.
 
-**Execution Failures** — menus failing to open, database errors, clicks not
-consuming chests, or unreachable profiles. Recorded **exclusively in the local
+**Execution Failures** — the game not answering, database errors, gifts the game
+did not open, or unreachable profiles. Recorded **exclusively in the local
 log** (`execution_logs/collector_YYYY-MM-DD.log`), as these require operational
-attention rather than manual data entry.
+attention rather than manual data entry. With *Save screenshot on error* on, a
+failure also leaves a picture of the game's tab in `execution_logs/screenshots/`,
+for a person to see what the game was showing.
 
 ### Incomplete Chests Review Queue
 
-A chest of a new type, a chest about to expire whose type could not be pictured, a player the game does not
+A chest about to expire whose type is not in the catalogue, a player the game does not
 name, or a row the database refused do not interrupt collection: the chest is filed in `incomplete_chests` with what is known and the
 game's ids, and opened.
 
@@ -418,21 +358,22 @@ opened can be put right, while one opened and not written cannot be recovered.
 ## Directory Structure
 
 ```
-config/     config.json (all parameters) · calibration.json · schema.py
-core/       browser (CDP) · vision · calibration · session
+config/     config.json (all parameters) · schema.py · settings
+core/       browser (CDP) · session (login, profile switch)
             runner (accounts > profiles > modules) · schedule (once a day)
 modules/    base_module (what a module is) · registry (the list of modules)
   chests/   collector · from_game (the collection) · game_link (the network) · gifts (the packets)
-            screen (the name of a new type) · steps
-  members/  module · roster (the clan's packets) · steps · store (json + csv)
+            catalog (chest types from the game's static data)
+  members/  module · roster (the clan's packets) · store (json + csv)
   shield/   module (reads, buys and activates the shield over the network)
   events/   module · mapper (walks the Journal) · autosend (the search)
-            feed (asks the game) · screen (a new tournament's name)
+            feed (asks the game)
             journal · tbcodec (the game's packets) · traffic (listens via CDP)
-            api (clan site client) · layout · store · legacy (import)
-gui/        app (configuration UI) · calibration_wizard
+            api (clan site client) · store · legacy (import)
+gui/        app (configuration UI)
 database/   MySQL connections and repositories
 utils/      logger · cancellation · text processing
+tools/      one-off maintenance scripts (audit_chest_types, fix_chest_types)
 tests/      unit tests: python -m unittest discover -s tests
 ```
 
@@ -459,8 +400,6 @@ simulated game and a fake clan site (`tests/fakes.py`, `tests/test_events_mapper
 | File | Contents | Version Controlled? |
 |---|---|---|
 | `config/config.json` | Accounts, passwords, databases, site tokens, all settings | No (contains credentials) |
-| `config/calibration.json` | Screen coordinates for this machine | No |
-| `config/calib_refs/*.png` | Calibration reference images | No |
 | `config/module_state.json` | When each module last ran on each profile | No |
 | `config/module_data/` | What modules keep between runs (players' names, tournaments sent) | No |
 

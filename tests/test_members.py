@@ -12,7 +12,6 @@ from unittest import mock
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.settings import AccountConfig, ProfileConfig  # noqa: E402
-from core.calibration import Calibration  # noqa: E402
 from core.runner import ModuleRunner  # noqa: E402
 from fakes import SITE_A, Clock, FakeContext, database, make_config, make_schedule  # noqa: E402
 from modules.chests import game_link  # noqa: E402
@@ -24,7 +23,7 @@ from modules.members import module as members_module  # noqa: E402
 from modules.members.roster import (CLAN_ROUTE, PROFILES_ROUTE, RosterCollector, parse_clan_record,  # noqa: E402
                                     parse_profile_row)
 from modules.members.store import roster_paths, save_roster  # noqa: E402
-from modules.registry import MODULES, step_groups  # noqa: E402
+from modules.registry import MODULES  # noqa: E402
 
 CLAN_ID = 936302870583
 
@@ -186,11 +185,6 @@ class MembersModuleTest(unittest.TestCase):
         self.config.set("modules.events", "enabled", False)
         self.alpha, self.beta = self.config.accounts[0].profiles
 
-        self.calibration = Calibration(step_groups(), os.path.join(self.folder, "calibration.json"),
-                                       os.path.join(self.folder, "refs"))
-        self.calibration.set_viewport(1000, 800)
-        self.calibration.use_viewport(1000, 800)
-
         test = self
         patches = [
             mock.patch.object(game_link, "GameLink", lambda **_kwargs: test.game),
@@ -206,7 +200,7 @@ class MembersModuleTest(unittest.TestCase):
 
     def module(self, game):
         self.game = game
-        self.ctx = FakeContext(self.config, self.calibration)
+        self.ctx = FakeContext(self.config)
         return MembersModule(self.ctx)
 
     def saved(self):
@@ -234,7 +228,6 @@ class MembersModuleTest(unittest.TestCase):
         self.assertEqual([("Alok BR", 644245120340, 1660747555), ("Ventura", 463856535987, 1874523405)],
                          [(m["name"], m["player_id"], m["power"]) for m in saved["members"][:2]])
         self.assertFalse(self.game.running, "the link is stopped")
-        self.assertEqual(0, self.ctx.game_state.closed, "no window was opened")
 
     def test_a_list_that_comes_short_is_asked_for_again_and_then_given_up(self):
         ids = list(PLAYERS)

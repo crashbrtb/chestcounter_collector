@@ -2,8 +2,8 @@
 Configuration interface.
 
 Everything that used to be edited by hand in position.cfg is here: the
-execution parameters, the accounts with their logins, the profiles with their
-databases, and the calibration. The window is built from `config/schema.py`, so
+execution parameters, the accounts with their logins, and the profiles with
+their databases. The window is built from `config/schema.py`, so
 a parameter added there shows up here with its label and help text without any
 change to this file.
 
@@ -12,7 +12,7 @@ The same goes for the modules: the Modules tab has one card per entry of
 what a module needs to know about each profile is asked in the profile's
 "Modules…" dialog. A new module shows up in both without any change here.
 
-The run button exists so the whole loop - configure, calibrate, test, fix -
+The run button exists so the whole loop - configure, test, fix -
 happens in one place. It runs the collection in a worker thread and streams the
 same log the scheduled run would write, because the useful question after a
 change is always 'would tonight's run work?'. Each module's card has a button of
@@ -20,6 +20,7 @@ its own that runs that module alone.
 """
 
 import queue
+import tkinter
 import logging
 import threading
 import webbrowser
@@ -30,15 +31,12 @@ from tkinter import messagebox
 
 from config.schema import SECTIONS, module_sections
 from config.settings import AccountConfig, ConfigManager, DatabaseConfig, ProfileConfig, coerce
-from core.calibration import Calibration
 from core.schedule import ModuleSchedule
 from database.db_connection import test_connection
 from modules.base_module import BaseModule
-from modules.registry import MODULES, calibration_scope, step_groups
+from modules.registry import MODULES
 from utils.cancel import Cancelled, cancellation, escape_watcher
 from utils.logger import logger
-
-from .calibration_wizard import CalibrationWizard
 
 PANEL_BG = "#16181d"
 CARD_BG = "#1c2029"
@@ -68,6 +66,27 @@ def labelled_entry(parent, label: str, width: int, **options) -> ctk.CTkEntry:
     entry = ctk.CTkEntry(column, width=width, **options)
     entry.pack(anchor="w")
     return entry
+
+
+def fit_to_width(label: ctk.CTkLabel, margin: int = 4) -> ctk.CTkLabel:
+    """
+    Wraps the label's text at whatever width it is given, instead of a fixed one.
+
+    A fixed wraplength is right at one window size only: at a smaller one the end
+    of the line falls off the card, and the window had to be enlarged to read it.
+    The label has to be packed with fill="x" (or sticky="ew") for this to work.
+    """
+    def resize(event):
+        scaling = ctk.ScalingTracker.get_widget_scaling(label)
+        width = max(int(event.width / scaling) - margin, 60)
+        if abs(label.cget("wraplength") - width) > 2:
+            label.configure(wraplength=width)
+
+    # CTkLabel.bind goes to the text inside, whose width follows the wraplength
+    # set here, so each change would ask for another. The outer frame's width is
+    # the room the layout gives the label.
+    tkinter.Misc.bind(label, "<Configure>", resize, add="+")
+    return label
 
 
 class LogPipe(logging.Handler):
@@ -291,17 +310,20 @@ class ProfileRow(ctk.CTkFrame):
         self.name.insert(0, profile.name)
         self.name.pack(side="left", padx=4, pady=8)
 
-        self.lbl_database = ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=11),
-                                         text_color=MUTED, anchor="w", width=180)
-        self.lbl_database.pack(side="left", padx=8, fill="x", expand=True)
-
-        ctk.CTkButton(self, text="Database…", width=80, fg_color="#21262d",
-                      command=self._edit_database).pack(side="left", padx=4)
+        # The buttons are packed first, from the right, so a long description
+        # wraps in the room left over instead of pushing them off the card.
+        ctk.CTkButton(self, text="✕", width=32, fg_color="#21262d", hover_color=ERROR_COLOR,
+                      command=lambda: self.on_remove(self)).pack(side="right", padx=(4, 10))
         if any(module.profile_fields for module in MODULES):
             ctk.CTkButton(self, text="Modules…", width=80, fg_color="#21262d",
-                          command=self._edit_modules).pack(side="left", padx=4)
-        ctk.CTkButton(self, text="✕", width=32, fg_color="#21262d", hover_color=ERROR_COLOR,
-                      command=lambda: self.on_remove(self)).pack(side="left", padx=(4, 10))
+                          command=self._edit_modules).pack(side="right", padx=4)
+        ctk.CTkButton(self, text="Database…", width=80, fg_color="#21262d",
+                      command=self._edit_database).pack(side="right", padx=4)
+
+        self.lbl_database = fit_to_width(ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=11),
+                                                      text_color=MUTED, anchor="w", justify="left",
+                                                      width=120))
+        self.lbl_database.pack(side="left", padx=8, pady=4, fill="x", expand=True)
 
         self._refresh_database_label()
 
@@ -400,22 +422,24 @@ class AccountCard(ctk.CTkFrame):
         self.cdp_port.insert(0, str(account.cdp_port or ""))
         ctk.CTkButton(second, text="Open window", width=0, fg_color="#21262d",
                       command=lambda: on_open_window(self)).pack(side="left", padx=6, pady=(17, 0))
-        ctk.CTkLabel(self,
-                     text="This account's own Chrome window. The folder keeps the session the game verified: the "
-                          "first login is by hand (Open window, then the code from the e-mail). Change the folder "
-                          "or the port only if they clash with something else; a new folder asks for a new code.",
-                     font=ctk.CTkFont(size=11), text_color=MUTED,
-                     wraplength=800, justify="left").pack(anchor="w", padx=18, pady=(4, 0))
+        fit_to_width(ctk.CTkLabel(self,
+                                  text="This account's own Chrome window. The folder keeps the session the game "
+                                       "verified: the first login is by hand (Open window, then the code from the "
+                                       "e-mail). Change the folder or the port only if they clash with something "
+                                       "else; a new folder asks for a new code.",
+                                  font=ctk.CTkFont(size=11), text_color=MUTED,
+                                  justify="left", anchor="w")).pack(fill="x", padx=18, pady=(4, 0))
 
-        ctk.CTkLabel(self, text="Profiles (cities) for this account, collected in this order:",
-                     font=ctk.CTkFont(size=11), text_color=MUTED).pack(anchor="w", padx=14, pady=(10, 2))
+        fit_to_width(ctk.CTkLabel(self, text="Profiles (cities) for this account, collected in this order:",
+                                  font=ctk.CTkFont(size=11), text_color=MUTED, justify="left", anchor="w")
+                     ).pack(fill="x", padx=14, pady=(10, 2))
 
         # Column names for the rows below, at the widths the rows themselves use.
         headings = ctk.CTkFrame(self, fg_color="transparent")
         headings.pack(fill="x", padx=12)
         for text, width, padding in (("Active", 28, (10, 4)),
-                                     ("Profile name (exactly as the game shows it)", 220, (4, 4)),
-                                     ("Database", 180, (8, 8))):
+                                     ("Profile name (as the game shows it)", 220, (4, 4)),
+                                     ("Database and modules", 180, (8, 8))):
             ctk.CTkLabel(headings, text=text, width=width, anchor="w",
                          font=ctk.CTkFont(size=11), text_color=MUTED).pack(side="left", padx=padding)
 
@@ -473,10 +497,9 @@ class AccountCard(ctk.CTkFrame):
 class App(ctk.CTk):
     """The configuration window."""
 
-    def __init__(self, config: ConfigManager, open_calibration: bool = False):
+    def __init__(self, config: ConfigManager):
         super().__init__()
         self.config_manager = config
-        self.calibration = Calibration(step_groups())
         self.context = None
         self.log_queue: queue.Queue = queue.Queue()
         self.widgets: Dict[str, Dict[str, object]] = {}
@@ -492,8 +515,6 @@ class App(ctk.CTk):
         self._build()
         logger.addHandler(LogPipe(self.log_queue))
         self.after(150, self._drain_log)
-        if open_calibration:
-            self.after(400, self.open_calibration)
 
     # ------------------------------------------------------------------- UI
     def _build(self):
@@ -524,9 +545,7 @@ class App(ctk.CTk):
 
         ctk.CTkButton(top, text="1 · Open game in Chrome", width=0, height=34,
                       command=self.connect_browser).pack(side="left", padx=4)
-        ctk.CTkButton(top, text="2 · Calibrate", width=0, height=34,
-                      command=self.open_calibration).pack(side="left", padx=4)
-        ctk.CTkButton(top, text="3 · Verify configuration", width=0, height=34,
+        ctk.CTkButton(top, text="2 · Verify configuration", width=0, height=34,
                       fg_color="#21262d", command=self.check_configuration).pack(side="left", padx=4)
         self.btn_run = ctk.CTkButton(top, text="▶ Run now", width=110, height=34,
                                      fg_color="#238636", hover_color="#2ea043", command=self.run_collection)
@@ -611,7 +630,7 @@ class App(ctk.CTk):
 
     def run_module_action(self, module, action):
         try:
-            message = getattr(module, action.method)(self.config_manager, self.calibration)
+            message = getattr(module, action.method)(self.config_manager)
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror(module.title, f"{action.label} failed:\n\n{exc}")
             return
@@ -644,7 +663,8 @@ class App(ctk.CTk):
 
             self.widgets[section.key] = {}
             for spec in section.fields:
-                self._build_field(block, section.key, spec)
+                if spec.in_parameters_tab:
+                    self._build_field(block, section.key, spec)
 
     def _build_field(self, parent, section_key: str, spec):
         row = ctk.CTkFrame(parent, fg_color="transparent")
@@ -762,7 +782,7 @@ class App(ctk.CTk):
     def restore_defaults(self):
         if not messagebox.askyesno("Restore defaults",
                                    "Reset all parameters to default values?\n"
-                                   "Accounts and calibration are not affected."):
+                                   "Accounts and profiles are not affected."):
             return
         from config.schema import default_config
 
@@ -812,7 +832,7 @@ class App(ctk.CTk):
         from core.context import build_context
 
         if self.context is None:
-            self.context = build_context(self.config_manager, self.calibration)
+            self.context = build_context(self.config_manager)
         if connect and self.context.browser.ws is None:
             self.context.start_browser()
         return self.context
@@ -822,20 +842,11 @@ class App(ctk.CTk):
             try:
                 self._ensure_context(connect=True)
                 self.context.browser.focus_tab()
-                logger.info("Game opened and connected. Log in and navigate to the screen you want to calibrate.")
+                logger.info("Game opened and connected.")
             except Exception as exc:  # noqa: BLE001
                 logger.error(f"Could not open the game: {exc}")
 
         self._run_in_background(work)
-
-    def open_calibration(self):
-        try:
-            context = self._ensure_context(connect=True)
-        except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("Calibration",
-                                 f"Must be connected to the game to calibrate.\n\n{exc}")
-            return
-        CalibrationWizard(self, context, on_done=lambda _complete: self._refresh_status())
 
     def check_configuration(self):
         def work():
@@ -847,7 +858,7 @@ class App(ctk.CTk):
                 for problem in problems:
                     logger.error(problem)
             else:
-                logger.info("Configuration and calibration are complete — ready to run.")
+                logger.info("Configuration is complete — ready to run.")
 
         self._run_in_background(work)
 
@@ -946,28 +957,23 @@ class App(ctk.CTk):
         self.after(200, self._drain_log)
 
     def _refresh_status(self):
-        self.calibration.load()
-        self.calibration.required = calibration_scope(self.config_manager)
         accounts = self.config_manager.accounts
         profiles = [p for a in accounts for p in a.profiles]
         collectable = [p for p in profiles if p.has_database]
-        missing = self.calibration.missing_steps()
         modules_text = self._refresh_modules(profiles)
 
-        if missing:
-            calibration_text = f"✖ Incomplete calibration ({len(missing)} step(s) missing)"
-            color = ERROR_COLOR
-        else:
-            calibration_text = f"✔ Calibrated on {self.calibration.created_at or 'unknown date'}"
+        if collectable:
+            status_text = f"✔ {len(collectable)} profile(s) configured"
             color = OK_COLOR
-        self.lbl_status.configure(text=calibration_text, text_color=color)
+        else:
+            status_text = "✖ No profile configured"
+            color = WARN_COLOR
+        self.lbl_status.configure(text=status_text, text_color=color)
 
         self.lbl_info.configure(text=(
             f"Registered accounts: {len(accounts)}   ·   profiles: {len(profiles)} "
             f"({len(collectable)} with configured database)\n"
             f"Modules: {modules_text}\n"
-            f"Calibration: {calibration_text}   ·   calibrated viewport: "
-            f"{self.calibration.viewport[0]}x{self.calibration.viewport[1]}\n"
             f"Configuration: {self.config_manager.path}"
         ))
 
@@ -980,19 +986,15 @@ class App(ctk.CTk):
             options = self.config_manager.module(module.key)
             enabled = bool(options.get("enabled", module.default_enabled))
             ready = [p for p in profiles if p.enabled and p.name and module.configured_for(p)]
-            missing = self.calibration.require(*module.required_steps)
             done = [entry.get("last_success", "") for entry in schedule.state.get(module.key, {}).values()]
             last = max(done, default="").replace("T", " ")[:16]
 
             parts = [f"{len(ready)} profile(s) set up",
-                     "calibrated" if not missing else f"{len(missing)} calibration step(s) missing",
                      f"last done {last}" if last else "never run"]
             if not enabled:
                 text, color = "○ Disabled", MUTED
             elif not ready:
                 text, color = "○ Enabled, but no profile is set up for it yet", WARN_COLOR
-            elif missing:
-                text, color = "✖ Enabled, not calibrated", ERROR_COLOR
             else:
                 text, color = "✔ Enabled", OK_COLOR
             if module.key in self.module_status:
@@ -1003,6 +1005,6 @@ class App(ctk.CTk):
         return ",  ".join(summary) or "none enabled"
 
 
-def launch(config: Optional[ConfigManager] = None, open_calibration: bool = False):
-    app = App(config or ConfigManager(), open_calibration=open_calibration)
+def launch(config: Optional[ConfigManager] = None):
+    app = App(config or ConfigManager())
     app.mainloop()

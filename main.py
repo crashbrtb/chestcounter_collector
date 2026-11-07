@@ -8,9 +8,8 @@ exit with a status code the scheduler can act on (0 done, 1 failed,
 2 misconfigured).
 
     main.py                 run the enabled modules, using config/config.json
-    main.py --gui           open the configuration and calibration interface
-    main.py --calibrate     open the calibration wizard directly
-    main.py --check         validate configuration and calibration, collect nothing
+    main.py --gui           open the configuration interface
+    main.py --check         validate configuration, collect nothing
     main.py --account NAME  restrict the run to one account
     main.py --profile NAME  restrict the run to one profile
     main.py --module KEY    run only this module (shield, chests, members, events); may be repeated
@@ -40,8 +39,7 @@ for stream in (sys.stdout, sys.stderr):
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Total Battle Chest Collector")
     parser.add_argument("--gui", action="store_true", help="open the configuration interface")
-    parser.add_argument("--calibrate", action="store_true", help="open the calibration wizard directly")
-    parser.add_argument("--check", action="store_true", help="validate configuration and calibration only")
+    parser.add_argument("--check", action="store_true", help="validate configuration only")
     parser.add_argument("--account", help="run only this account")
     parser.add_argument("--profile", help="run only this profile")
     parser.add_argument("--module", action="append", metavar="KEY",
@@ -58,9 +56,7 @@ def load_configuration() -> ConfigManager:
 
     A first run on a machine that had the old collector inherits its database
     credentials from position.cfg - those were typed in by hand once and there is
-    no reason to make anyone type them again. The old coordinates are not
-    imported: they were positions on the desktop client's screen and mean nothing
-    in the browser.
+    no reason to make anyone type them again.
     """
     config = ConfigManager()
     if config.exists:
@@ -73,7 +69,7 @@ def load_configuration() -> ConfigManager:
         profiles = sum(len(a.profiles) for a in imported)
         logger.info(
             f"Imported {profiles} profile(s) from position.cfg. Open the interface to fill in "
-            f"the account login and password, then run the calibration."
+            f"the account login and password."
         )
     config.save()
     return config
@@ -97,13 +93,13 @@ def main() -> int:
     if args.keep_open:
         config.set("execution", "close_browser_on_finish", False)
 
-    if args.gui or args.calibrate:
+    if args.gui:
         try:
             from gui.app import launch
         except ImportError as exc:
             logger.error(f"Interface unavailable ({exc}). Run install.bat to install customtkinter.")
             return EXIT_MISCONFIGURED
-        launch(config, open_calibration=args.calibrate)
+        launch(config)
         return EXIT_OK
 
     from core.context import build_context
@@ -118,7 +114,7 @@ def main() -> int:
             logger.error(problem)
         if problems:
             return EXIT_MISCONFIGURED
-        logger.info("Configuration and calibration are complete.")
+        logger.info("Configuration is complete.")
         return EXIT_OK
 
     titles = ", ".join(module.title for module in runner.modules) or "none"
