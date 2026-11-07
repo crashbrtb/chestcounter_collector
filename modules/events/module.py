@@ -39,7 +39,7 @@ from core.schedule import SCHEDULE_DAILY
 from utils.logger import logger
 
 from ..base_module import BaseModule
-from . import autosend, journal, mapper
+from . import autosend, catalog, journal, mapper
 from .api import ApiError, SiteClient, normalize_site_url
 from .store import SearchMemory, SentHistory, profile_cache_path
 
@@ -146,13 +146,14 @@ class EventsModule(BaseModule):
         try:
             known: Dict[str, dict] = {}
             try:
-                known = {f"{k['game_type']}|{k.get('ranking') or ''}": k for k in client.known_tournaments()}
+                known = {
+                    catalog.ranking_key(k["game_type"], k.get("ranking")): k
+                    for k in client.known_tournaments()
+                }
             except ApiError as exc:
                 logger.warning(f"The site's catalogue is unavailable: {exc.message}")
 
-            def catalogue_name(t: journal.Tournament) -> str:
-                entry = known.get(f"{(t.tournament_key or '').split(':')[0]}|{t.ranking or ''}")
-                return entry["name"] if entry and entry.get("name") else ""
+            catalogue_name = catalog.make_catalogue_name(client, known)
 
             history = SentHistory(site)
             memory = SearchMemory(site)
