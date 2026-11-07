@@ -26,8 +26,8 @@ if not exist "%SCRIPT_DIR%execution_logs" (
 if not exist "%SCRIPT_DIR%config" mkdir "%SCRIPT_DIR%config"
 
 REM --- 1. Python ----------------------------------------------------------------
-REM  The dependencies decide the floor: Pillow and mysql-connector-python both
-REM  require 3.10 or newer. A Python below that used to get this far, build a
+REM  The dependencies decide the floor: mysql-connector-python requires
+REM  3.10 or newer. A Python below that used to get this far, build a
 REM  venv, and only fail pages later inside pip - so the version is checked
 REM  here, where the message can still say what is wrong.
 set "SYS_PYTHON="
@@ -104,10 +104,9 @@ echo  [COMPLETE]
 echo.
 echo  Next steps (double-click, no command line needed):
 echo    1) Configure.bat - set up accounts, profiles, and databases
-echo    2) Click "1 · Open game in Chrome", log in and navigate to the clan screen
-echo    3) Click "2 · Calibrate" (or Calibrate.bat) - mark controls on the capture
-echo    4) Click "▶ Run collection now" to test
-echo    5) Point Windows Task Scheduler to run.bat
+echo    2) On each account, click "Open window", log in and type the e-mailed code
+echo    3) Click "▶ Run now" to test
+echo    4) Point Windows Task Scheduler to run.bat
 echo ==============================================================================
 echo.
 pause

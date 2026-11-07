@@ -8,10 +8,10 @@ window had to be in front, at a known resolution, and every click was a real
 mouse move that any other window could steal. In the browser the same actions go
 through CDP, which changes three things that mattered:
 
-* coordinates are CSS pixels of the page, not of the monitor - so the window can
-  be moved, and another window can be on top, without breaking anything;
-* screenshots come from `Page.captureScreenshot`, which renders a region at any
-  scale we ask for, rendered by the browser itself with no interpolation;
+* the game's own requests can be listened to and sent from inside its tab, so
+  every module talks to the game over the network instead of reading the screen;
+* the window can be moved, and another window can be on top, without breaking
+  anything;
 * logging in is a form on a web page.
 
 One Browser is one account's window: a debugging port and the folder that keeps
@@ -19,8 +19,6 @@ the session the game verified. A port says nothing about who is behind it - any
 other program's Chrome can be listening there - so a window is only used, or
 closed, after its command line shows it is on our folder (`check_owner`). The
 wrong window would mean another account's chests in this one's database.
-
-Everything here speaks CSS pixels relative to the top-left of the viewport.
 """
 
 import base64
@@ -30,14 +28,7 @@ import re
 import subprocess
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
-
-import numpy as np
-
-try:
-    import cv2
-except ImportError:  # pragma: no cover - guarded by requirements.txt
-    cv2 = None
+from typing import Any, Dict, List, Optional
 
 try:
     import requests
@@ -106,7 +97,7 @@ THROTTLING_FLAGS = (
 
 
 class Browser:
-    """A Chrome tab showing Total Battle, plus the input and capture it accepts."""
+    """A Chrome tab showing Total Battle, plus the input it accepts."""
 
     def __init__(self, config: Dict[str, Any], user_data_dir: str):
         self.host = config.get("cdp_host", "127.0.0.1")
@@ -122,8 +113,6 @@ class Browser:
 
         self.ws = None
         self.tab_id: Optional[str] = None
-        # Display scaling: captures come back multiplied by it (see capture()).
-        self.dpr = 1.0
         self._msg_id = 0
         # One socket, one conversation at a time (see send()).
         self._lock = threading.RLock()
@@ -173,8 +162,8 @@ class Browser:
             *THROTTLING_FLAGS,
 
             # The translate bar is browser chrome, not page content: it never
-            # reaches a screenshot nor intercepts a CDP click. It is disabled
-            # anyway so that what you see matches what the collector sees.
+            # intercepts a CDP click. It is disabled anyway so that what you see
+            # matches what the collector sees.
             "--disable-translate",
         ]
         if self.start_maximized:
@@ -468,17 +457,8 @@ class Browser:
         self.send("Page.enable")
         self.send("Runtime.enable")
         self.send("DOM.enable")
-        self.refresh_dpr()
         logger.info(f"Connected to tab: {tab.get('url', '')[:90]}")
         return True
-
-    def refresh_dpr(self) -> float:
-        """Re-reads the display scaling; it changes with the monitor and with zoom."""
-        value = self.evaluate("window.devicePixelRatio")
-        self.dpr = float(value) if isinstance(value, (int, float)) and value > 0 else 1.0
-        if abs(self.dpr - 1.0) > 0.01:
-            logger.info(f"Display scaling is {self.dpr:g}x; captures are corrected to CSS pixels.")
-        return self.dpr
 
     def disconnect(self):
         if self.ws:
@@ -620,65 +600,6 @@ class Browser:
 
     # ------------------------------------------------------------------ input
 
-    def viewport(self) -> Tuple[int, int]:
-        size = self.evaluate("[window.innerWidth, window.innerHeight]") or [0, 0]
-        return int(size[0]), int(size[1])
-
-    def set_viewport(self, width: int, height: int, tolerance: int = 2, attempts: int = 4) -> bool:
-        """
-        Resizes the window until the page area matches `width` x `height`.
-
-        Calibrated positions are page coordinates, so a page of a different size
-        forces every one of them to be rescaled - and a game interface does not
-        scale linearly. Panels stay centred and buttons keep their size, so a
-        rescaled point drifts off a small button entirely: the click happens, at
-        the wrong place, and nothing appears to have been clicked.
-
-        Restoring the calibrated page size removes the rescaling instead of
-        trying to compensate for it. The loop converges because the difference
-        between the window and the page area - toolbar, borders - is constant.
-        """
-        if width <= 0 or height <= 0:
-            return False
-
-        try:
-            window = self.send("Browser.getWindowForTarget", {"targetId": self.tab_id})
-        except BrowserError as exc:
-            logger.debug(f"Browser.getWindowForTarget: {exc}")
-            return False
-
-        window_id = window.get("windowId")
-        bounds = window.get("bounds", {})
-        if not window_id:
-            return False
-
-        for _ in range(attempts):
-            inner_w, inner_h = self.viewport()
-            if abs(inner_w - width) <= tolerance and abs(inner_h - height) <= tolerance:
-                return True
-            if not inner_w or not inner_h:
-                return False
-
-            outer_w = int(bounds.get("width") or inner_w)
-            outer_h = int(bounds.get("height") or inner_h)
-            new_bounds = {
-                "windowState": "normal",
-                "width": outer_w + (width - inner_w),
-                "height": outer_h + (height - inner_h),
-            }
-            try:
-                self.send("Browser.setWindowBounds", {"windowId": window_id, "bounds": new_bounds})
-            except BrowserError as exc:
-                logger.debug(f"Browser.setWindowBounds: {exc}")
-                return False
-            time.sleep(0.4)
-            bounds = self.send("Browser.getWindowForTarget",
-                               {"targetId": self.tab_id}).get("bounds", new_bounds)
-
-        self.refresh_dpr()
-        inner_w, inner_h = self.viewport()
-        return abs(inner_w - width) <= tolerance and abs(inner_h - height) <= tolerance
-
     def move(self, x: float, y: float):
         self.send("Input.dispatchMouseEvent", {
             "type": "mouseMoved", "x": float(x), "y": float(y), "button": "none", "buttons": 0,
@@ -702,22 +623,6 @@ class Browser:
             if clicks > 1:
                 time.sleep(0.05)
         if delay > 0:
-            time.sleep(delay)
-
-    def scroll(self, x: float, y: float, delta_y: int = 400, repetitions: int = 1, delay: float = 0.15):
-        """
-        Turns the wheel over (x, y).
-
-        The sign is the wheel's own, not the content's: **positive scrolls DOWN**,
-        the way pushing the wheel away from you reveals what is below.
-        """
-        self.move(x, y)
-        time.sleep(0.03)
-        for _ in range(repetitions):
-            self.send("Input.dispatchMouseEvent", {
-                "type": "mouseWheel", "x": float(x), "y": float(y),
-                "deltaX": 0, "deltaY": int(delta_y), "button": "none", "buttons": 0,
-            })
             time.sleep(delay)
 
     def press_key(self, name: str, delay: float = 0.1):
@@ -768,82 +673,25 @@ class Browser:
 
     # --------------------------------------------------------------- capture
 
-    def capture(
-        self,
-        region: Optional[Tuple[int, int, int, int]] = None,
-        scale: float = 1.0,
-    ) -> Optional[np.ndarray]:
+    def save_screenshot(self, path: str) -> bool:
         """
-        A picture of the page, or of one region of it, as a BGR image.
+        Writes what the tab shows to `path`, as the PNG Chrome renders.
 
-        `region` is (left, top, width, height) in CSS pixels. `scale` asks the
-        browser to RENDER that region larger instead of resizing a small capture
-        afterwards - the pixels are real.
+        Only for the diagnostics of a failure: a login page that did not go
+        away, a game that did not load, a dialog the game put up. Nothing reads
+        the picture; it is for a person looking at the log.
         """
-        if cv2 is None:
-            raise BrowserError("dependency 'opencv-python' is not installed (run install.bat)")
-
-        if region:
-            left, top, width, height = (int(v) for v in region)
-        else:
-            left, top = 0, 0
-            width, height = self.viewport()
-        if width <= 0 or height <= 0:
-            return None
-
-        # Undo the display scaling.
-        #
-        # Chrome renders the screenshot at the device pixel ratio: on a Windows
-        # desktop at 125% a 1536-wide page comes back as a 1920-wide image. Every
-        # coordinate in this application is a CSS pixel - that is what a click
-        # takes - so a picture in device pixels silently made every position
-        # 1.25x too large. Points marked on the calibration image landed off the
-        # button, or off the page entirely, and no click reached anything.
-        #
-        # Dividing the requested scale by the ratio cancels it: the image comes
-        # back at exactly `scale` times the CSS size, whatever the display is
-        # set to.
-        effective_scale = float(scale) / (self.dpr or 1.0)
-        params: Dict[str, Any] = {
-            "format": "png",
-            "fromSurface": True,
-            "captureBeyondViewport": False,
-            "clip": {
-                "x": float(left), "y": float(top),
-                "width": float(width), "height": float(height),
-                "scale": effective_scale,
-            },
-        }
-
         try:
-            result = self.send("Page.captureScreenshot", params, timeout=30.0)
+            data = self.send("Page.captureScreenshot", {"format": "png"}, timeout=30.0).get("data")
         except BrowserError as exc:
             logger.warning(f"Screenshot failed: {exc}")
-            return None
-
-        data = result.get("data")
+            return False
         if not data:
-            return None
-        buffer = np.frombuffer(base64.b64decode(data), dtype=np.uint8)
-        image = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
-        if image is None:
-            return None
-
-        # Chrome rounds the clip, so the result can be a pixel off. Coordinate
-        # maths divides by `scale`, and a stray pixel there becomes a drift
-        # across the image, so the size is made exact.
-        expected = (max(1, int(round(width * scale))), max(1, int(round(height * scale))))
-        if (image.shape[1], image.shape[0]) != expected:
-            image = cv2.resize(image, expected, interpolation=cv2.INTER_AREA)
-        return image
-
-    def save_screenshot(self, path: str) -> bool:
-        image = self.capture()
-        if image is None or cv2 is None:
             return False
         try:
-            cv2.imwrite(path, image)
+            with open(path, "wb") as handle:
+                handle.write(base64.b64decode(data))
             return True
-        except Exception as exc:
+        except (OSError, ValueError) as exc:
             logger.debug(f"Could not write screenshot to {path}: {exc}")
             return False

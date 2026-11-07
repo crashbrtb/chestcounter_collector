@@ -1,3 +1,16 @@
+Next  - Nothing reads the screen any more, and the calibration is gone with what was left of it.
+  - A new tournament type goes to the site's catalogue without a picture. The walk no longer tries to
+    picture it twice, nor asks the game for the top of the Journal to check that the places held.
+  - The incomplete chests no longer carry a picture: the 'screenshot' argument and the query of the
+    types with a picture in review are gone (database/repositories.py).
+  - The interface opens again: gui/__init__.py still imported the deleted calibration wizard.
+  - Removed 'run.bat calibrate', which called a --calibrate main.py no longer has.
+  - Removed opencv-python, numpy and Pillow. The screenshot on error is the PNG Chrome renders,
+    written as it comes; with them went the capture, the display scaling, the viewport resizing
+    and the wheel scrolling, which only the calibrated screens used (core/browser.py).
+  - Removed the leftovers in config/ (calibration.json, calib_refs/ and their .bak copies),
+    capture.png, and every mention of the calibration in the README, the scripts and the code.
+
 Next  - The Triumphal Gifts tab is collected again. Since 3.0 its gifts (kind 2 in the game's list) were left
     in the game. They are now written and opened over the network like the Gifts tab, and a new type of that
     tab is pictured on it ('Triumphal gifts tab' step, back in the calibration as optional).

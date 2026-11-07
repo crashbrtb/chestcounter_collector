@@ -2,8 +2,8 @@
 Paths, configuration loading and the account/profile model.
 
 Everything the application needs to know is in config/config.json, written and
-read here. There is no coordinate in this file and none in the code: screen
-positions live in config/calibration.json, produced by the calibration wizard.
+read here. There is no screen coordinate anywhere: every module talks to the
+game over the network.
 
 Account model
 -------------
@@ -42,8 +42,6 @@ from .schema import all_sections, bucket, default_config, field_for, module_sect
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 CONFIG_DIR = os.path.join(BASE_DIR, "config")
 CONFIG_FILE_PATH = os.path.join(CONFIG_DIR, "config.json")
-CALIBRATION_FILE_PATH = os.path.join(CONFIG_DIR, "calibration.json")
-CALIBRATION_REFS_DIR = os.path.join(CONFIG_DIR, "calib_refs")
 # When each module last ran for each profile (see core/schedule.py).
 MODULE_STATE_PATH = os.path.join(CONFIG_DIR, "module_state.json")
 # What a module keeps between runs, one folder per module.
@@ -385,8 +383,8 @@ def migrate_legacy_config(legacy_path: str = LEGACY_CONFIG_PATH) -> List[Account
     Rebuilds the account list from the old position.cfg.
 
     Only the database credentials survive the move. The old [COORDINATES] were
-    screen positions of the desktop client; in the browser they point nowhere,
-    so they are dropped and the calibration wizard takes over.
+    screen positions of the desktop client; nothing uses screen positions any
+    more, so they are dropped.
 
     Each old [account_*] section was really a profile of a single logged-in
     account, which is exactly how they are imported: one account with an empty

@@ -1,67 +1,29 @@
 """
-Collecting the clan's gifts: over the network, with the screen only for a picture
-of a chest type nothing knows yet.
+Collecting the clan's gifts over the network.
 
 How a run goes
 --------------
     1. the game is asked for the list of gifts;
-    2. each gift whose type has a name, oldest first, is written to the database
+    2. unknown player IDs are named by the game (route 402/12026) and unknown chest
+       type IDs are named from the static chest catalog (local cache / CDN);
+    3. each gift whose type has a name, oldest first, is written to the database
        and then opened, waiting for the game's answer before the next;
-    3. the list is asked for again, and the database made to agree with it;
-    4. while something is left, one type without a name is pictured on the panel,
-       and it goes back to 2 with its chests bound for the site's review queue.
+    4. the list is asked for again, and the database made to agree with it.
 
 Writing comes before opening, as it always did: a chest written and not opened
 can be put right, one opened and not written is gone. A gift is written whole -
 an epic monster's five chests are five rows at once - and opened whole, so a gift
 is in the database entirely or not at all, and one found there already (a run
 stopped halfway) is opened without being written again.
-
-Settling
---------
-A request that failed may have reached the game or not, so the answer alone does
-not say what happened to the gift. The next list does:
-
-    * a gift that is gone was opened, and is in the database already;
-    * a gift still there, untouched, was not opened: what this run wrote for it
-      is taken back, and it waits for the next pass or the next run.
-
-Names
------
-The game sends a chest's type and its player as numbers. A player the site's
-member list does not know is asked of the game, which knows every name. A type is
-named by `game_chest_types` or by the chests already written with it (see
-repositories.chest_types). A type neither knows is for a person to name.
-
-A type named wrong stays wrong - type 5784 was read off the line of another player's
-chest on 12/10/2026, and named hundreds of chests after it - so nothing here reads
-a name. The chests of a new type are opened and filed in the review queue, the first
-with a picture of it and all with their type, player and date. Whoever
-reviews one on the site names the type, for those chests and for the ones to come.
-While a picture of the type is waiting there, no other is taken.
-
-A type that cannot be pictured is left in the game for the next run, unless its gift
-is about to expire: then it goes to the review queue without one, rather than be lost.
-
-The two tabs
-------------
-The list carries the gifts of both tabs of the panel, Gifts and Triumphal Gifts,
-told apart by the gift's kind. Both are written and opened the same way. A picture
-is taken on the gift's own tab, at its place among the gifts of that tab.
-
-Opening a triumphal gift over the network was first tried on a real run, not
-measured beforehand. So the first one the game refuses, or leaves in the list as
-it was, sets the tab aside for the rest of the run: what was written for it is
-taken back, the others stay in the game for the next run, and the run says so -
-without stopping the Gifts tab.
 """
 
 import time
-from typing import Callable, Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 
-from utils.cancel import Cancelled, cancellation
+from utils.cancel import cancellation
 from utils.logger import logger
 
+from .catalog import lookup_chest_types
 from .game_link import GameLink, GameLinkError, pace
 from .gifts import KNOWN_KINDS, PLAIN_GIFT, TAB_NAMES, Gift
 
@@ -74,9 +36,6 @@ FAILURE_WAIT = 1.0
 # up what arrived meanwhile.
 MAX_PASSES = 4
 
-# How many times the panel is looked at before a type is left without a picture.
-PICTURE_ATTEMPTS = 2
-
 # A gift with less than this to live is not left for the next run.
 ABOUT_TO_EXPIRE = 60 * 60
 
@@ -85,13 +44,13 @@ class GameCollection:
     """The gifts of one clan, collected over the network. See the module's docstring."""
 
     def __init__(self, label: str, repo, link: GameLink, clan_id: int, interval: float,
-                 take_picture: Callable[[int, int], Optional[bytes]]):
+                 lookup_types: Optional[Callable[[Iterable[int]], Dict[int, Tuple[str, str]]]] = None):
         self.label = label                # the profile, for the log
         self.repo = repo
         self.link = link
         self.clan_id = clan_id
         self.interval = interval          # the least time between the start of two requests
-        self.take_picture = take_picture  # (place in its tab, kind) -> a picture of that chest on the panel
+        self.lookup_types = lookup_types if lookup_types is not None else lookup_chest_types
 
         self.types: Dict[int, Tuple[str, str]] = repo.chest_types()
         self.players: Dict[int, str] = repo.game_players()
@@ -100,9 +59,8 @@ class GameCollection:
         self.incomplete = 0
         self.warned_kinds = False
         self.set_aside: Set[int] = set()            # kinds the game would not open this run, left in the game
-        self.pictures: Dict[int, bytes] = {}        # type -> the picture its next chest is filed with
-        self.in_review: Set[int] = repo.types_in_review()   # types whose picture is, or will be, in the queue
-        self.unnamed: Set[int] = set()              # types that could not be pictured, left for the next run
+        self.unnamed: Set[int] = set()              # types not found in the catalog, left for the next run
+        self._catalog_tried: Set[int] = set()       # types already asked of the static catalog this run
         self.problem: Optional[str] = None          # why the run did not finish, for the run's record
 
     # ------------------------------------------------------------------ run
@@ -120,10 +78,10 @@ class GameCollection:
                 attempted = []
                 waiting = self._waiting(gifts)
                 self._name_players(gifts)
+                self._name_types(waiting)
 
                 ready = [gift for gift in waiting if self._ready(gift)]
-                # A type just pictured is opened whatever the count: its picture goes with its first chest.
-                if ready and passes >= MAX_PASSES and not any(gift.chest_type in self.pictures for gift in ready):
+                if ready and passes >= MAX_PASSES:
                     logger.info(f"[{self.label}] {sum(g.quantity for g in ready)} chest(s) arrived after the last "
                                 f"pass; they are left for the next run.")
                     break
@@ -139,7 +97,10 @@ class GameCollection:
                 nameless = [gift for gift in waiting if gift.chest_type not in self.unnamed]
                 if not nameless:
                     break
-                self._picture_type(nameless[0], gifts)
+                for gift in nameless:
+                    self.unnamed.add(gift.chest_type)
+                    logger.warning(f"[{self.label}] Chest type {gift.chest_type} is not in the catalog "
+                                   f"[gift {gift.gift_id}]; left in the game unless about to expire.")
         except GameLinkError as exc:
             logger.warning(f"[{self.label}] {exc}. What was written and not opened is opened on the next run.")
             self.problem = "the game stopped answering"
@@ -156,9 +117,9 @@ class GameCollection:
         return self.collected, self.incomplete, True
 
     def _ready(self, gift: Gift) -> bool:
-        """Whether it can be written and opened now: its type is named or in review, or it has no more time to wait."""
-        return gift.chest_type in self.types or gift.chest_type in self.in_review or (gift.chest_type in self.unnamed
-                                                                                      and gift.expires_at - time.time() < ABOUT_TO_EXPIRE)
+        """Whether it can be written and opened now: its type is named, or it has no more time to wait."""
+        return gift.chest_type in self.types or (gift.chest_type in self.unnamed
+                                                 and gift.expires_at - time.time() < ABOUT_TO_EXPIRE)
 
     def _waiting(self, gifts: List[Gift]) -> List[Gift]:
         """What can be opened: an expired gift stays listed until someone deletes it, and opens nothing."""
@@ -195,38 +156,30 @@ class GameCollection:
             logger.info(f"[{self.label}] {len(named)} of {len(unknown)} player(s) the site's member list does not "
                         f"know were named by the game.")
 
-    # --------------------------------------------------------------- naming
-    def _picture_type(self, gift: Gift, listed: List[Gift]) -> None:
-        """Pictures a new type on the panel for the review queue, or sets it aside when it cannot."""
-        type_id = gift.chest_type
-        # The lines of the gift's tab: one for each chest, in the order of the gifts.
-        line = [item for item in listed if item.kind == gift.kind for _ in range(item.quantity)]
-        position = line.index(gift)
-
-        for _ in range(PICTURE_ATTEMPTS):
-            cancellation.check()
-            try:
-                picture = self.take_picture(position, gift.kind)
-            except Cancelled:
-                raise
-            except Exception as exc:  # noqa: BLE001 - the screen failing must not take the collection with it
-                logger.warning(f"[{self.label}] The gifts panel could not be pictured: {exc}")
-                picture = None
-            if picture:
-                self.pictures[type_id] = picture
-                self.in_review.add(type_id)
-                logger.warning(f"[{self.label}] New chest type {type_id}: its chests go to the review queue on the "
-                               f"site, with a picture, for someone to name it.")
-                return
-
-        self.unnamed.add(type_id)
-        logger.warning(f"[{self.label}] Chest type {type_id} could not be pictured [gift {gift.gift_id}]; "
-                       f"its chests are left in the game for the next run, unless they are about to expire.")
+    def _name_types(self, gifts: List[Gift]) -> None:
+        """Resolves unknown chest types from the local/CDN static catalog and saves them to `game_chest_types`."""
+        unknown = sorted({gift.chest_type for gift in gifts
+                          if gift.chest_type not in self.types and gift.chest_type not in self._catalog_tried})
+        if not unknown:
+            return
+        self._catalog_tried.update(unknown)
+        named = self.lookup_types(unknown)
+        if not named:
+            return
+        learn = getattr(self.repo, "learn_chest_type", None)
+        for type_id, (name, source) in named.items():
+            if callable(learn):
+                learn(type_id, name, source)
+            self.types[type_id] = (name, source)
+        if callable(learn):
+            self.types.update(self.repo.chest_types())
+        logger.info(f"[{self.label}] {len(named)} of {len(unknown)} new chest type(s) were named from the game "
+                    f"catalog and saved to game_chest_types.")
 
     # -------------------------------------------------------------- opening
     def _open(self, waiting: List[Gift]) -> Tuple[List[Gift], bool]:
         """Writes and opens each gift. Returns the gifts it tried, and False when it had to give up."""
-        self.repo.keep_alive()   # a picture may have kept the database idle long enough for the server to drop it
+        self.repo.keep_alive()
         in_database = self.repo.chests_of_gifts(waiting[0].gift_id, waiting[-1].gift_id)
         already = sum(1 for gift in waiting if in_database.get(gift.gift_id) and gift.gift_id not in self.written)
         if already:
@@ -290,8 +243,7 @@ class GameCollection:
 
         missing = gift.quantity - len(rows)
         for _ in range(missing):
-            self.repo.insert_incomplete_chest(name, player, source, self.pictures.pop(gift.chest_type, None),
-                                              gift.generated_at, game)
+            self.repo.insert_incomplete_chest(name, player, source, gift.generated_at, game)
         self.incomplete += missing
 
     # ------------------------------------------------------------- settling

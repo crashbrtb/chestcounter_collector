@@ -1,8 +1,6 @@
 """
 The clan chests of one profile: every gift waiting is written to the profile's
-database and opened, over the network (see from_game.py). The screen is only read
-for the name of a chest type met for the first time, so a collection does not
-depend on the calibration until that happens.
+database and opened, over the network (see from_game.py).
 """
 
 from typing import Any, Dict, List, Optional
@@ -17,8 +15,6 @@ from utils.logger import logger
 from ..base_module import BaseModule
 from .from_game import GameCollection
 from .game_link import GameLink
-from .screen import ChestScreen
-from .steps import STEPS
 
 
 class ChestCollector(BaseModule):
@@ -28,7 +24,6 @@ class ChestCollector(BaseModule):
     title = "Clan chests"
     description = ("Opens every clan gift of each profile and records it in that profile's database. "
                    "A profile without a database is skipped.")
-    steps = STEPS
     settings = (
         # Measured on a recorded run of 856 chests opened by clicking: 1.3 per
         # second on average, 4 at the most in any one second. One request at a
@@ -89,7 +84,7 @@ class ChestCollector(BaseModule):
                 if clan_id is None:
                     return dict(result, reason="the game says this profile has no clan")
                 interval = float(self.options.get("open_interval", 0.2))
-                collection = GameCollection(profile.label, repo, link, clan_id, interval, ChestScreen(self.ctx).picture)
+                collection = GameCollection(profile.label, repo, link, clan_id, interval)
                 collected, incomplete, finished = collection.run()
             finally:
                 link.stop()

@@ -12,7 +12,7 @@ from core.browser import Browser, WrongWindow, command_line_folder, on_port  # n
 from core.context import build_context  # noqa: E402
 from core.runner import ModuleRunner, RunnerError  # noqa: E402
 from core.session import SESSION_MARK, LoginManager, NeedsPerson  # noqa: E402
-from fakes import FakeBrowser, FakeContext, make_calibration, make_config, make_schedule  # noqa: E402
+from fakes import FakeBrowser, FakeContext, make_config, make_schedule  # noqa: E402
 from modules.base_module import BaseModule  # noqa: E402
 from utils.cancel import Cancelled, cancellation  # noqa: E402
 
@@ -88,21 +88,15 @@ class PinningTest(unittest.TestCase):
 
     def test_the_services_of_each_account_are_on_its_own_window(self):
         self.config.accounts = [account("A", "a"), account("B", "b")]
-        calibration_path = os.path.join(self.tmp.name, "refs")
-        from core.calibration import Calibration
-        from modules.registry import step_groups
-        calibration = Calibration(step_groups(), os.path.join(self.tmp.name, "c.json"), calibration_path)
-        context = build_context(self.config, calibration)
+        context = build_context(self.config)
         first, second = self.config.accounts
 
-        self.assertEqual(9322, context.browser.port, "the first account's window, for the wizard and the checks")
+        self.assertEqual(9322, context.browser.port, "the first account's window, for the checks")
         self.assertIs(context, context.for_account(first))
         other = context.for_account(second)
         self.assertIsNot(context, other)
         self.assertIs(other, context.for_account(second))
         self.assertEqual((9323, self.config.chrome_folder_for(second)), (other.browser.port, other.browser.user_data_dir))
-        self.assertIsNot(context.calibration, other.calibration)
-        self.assertEqual(calibration.path, other.calibration.path)
 
 
 class OwnerTest(unittest.TestCase):
@@ -227,7 +221,6 @@ class FirstLoginTest(unittest.TestCase):
 
 class Chests(BaseModule):
     key, title = "chests", "Clan chests"
-    required_steps = ()
     configured_for = classmethod(lambda cls, profile: profile.has_database)
 
     def __init__(self, context, on_profile):
@@ -242,13 +235,13 @@ class Chests(BaseModule):
 class Windows(FakeContext):
     """A context with one window per account."""
 
-    def __init__(self, config, calibration):
-        super().__init__(config, calibration)
+    def __init__(self, config):
+        super().__init__(config)
         self.windows = {}
 
     def for_account(self, who):
         if who.name not in self.windows:
-            self.windows[who.name] = FakeContext(self.config, self.calibration, FakeBrowser())
+            self.windows[who.name] = FakeContext(self.config, FakeBrowser())
             self.windows[who.name].browser.port = who.cdp_port
         return self.windows[who.name]
 
@@ -264,7 +257,7 @@ class AtOnceTest(unittest.TestCase):
         self.addCleanup(cancellation.reset)
 
     def runner(self, on_profile):
-        self.ctx = Windows(self.config, make_calibration(self.tmp.name, self.config))
+        self.ctx = Windows(self.config)
         self.module = Chests(self.ctx, on_profile)
         from datetime import datetime
         return ModuleRunner(self.ctx, [self.module], make_schedule(self.tmp.name, datetime.now),

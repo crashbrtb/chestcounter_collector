@@ -4,8 +4,8 @@ Events module - the clan's tournament rankings, from the Journal to the clan sit
 For each profile it asks the game for the Journal over the network and sends the
 rankings the site does not have yet (see autosend.py for the whole search). It was
 the standalone EventUploader; here it runs on the profile the application has just
-switched to. The screen is only pictured for a tournament type the site has never
-heard of, so a search does not depend on the calibration until that happens.
+switched to. Nothing is clicked or read off the screen: a tournament type the
+site has never heard of goes to its catalogue, for a person to name.
 
 One clan, one site, one token
 -----------------------------
@@ -41,8 +41,6 @@ from utils.logger import logger
 from ..base_module import BaseModule
 from . import autosend, journal, mapper
 from .api import ApiError, SiteClient, normalize_site_url
-from .layout import DEFAULT_CARDS_PER_PAGE, STEPS, JournalLayout
-from .screen import JournalScreen
 from .store import SearchMemory, SentHistory, profile_cache_path
 
 # The version of the uploader this module carries, as the site records it.
@@ -57,7 +55,6 @@ class EventsModule(BaseModule):
                    "Modules); a profile without them is skipped.")
     default_schedule = SCHEDULE_DAILY
     default_day_start = "14:00"   # the game's day turns in the afternoon, not at midnight
-    steps = STEPS
     settings = (
         Field("auto_publish", "bool", "Close complete rankings on the site", True,
               "When every player of a ranking has a name the site is asked to publish it right away. "
@@ -66,9 +63,6 @@ class EventsModule(BaseModule):
               "How many days of the Journal a search walks. After a complete search only the days since "
               "it are walked again.",
               minimum=1, maximum=365),
-        Field("cards_per_page", "int", "Cards per Journal page", DEFAULT_CARDS_PER_PAGE,
-              "How many cards one page of the Journal shows. It says on which page a card is when the "
-              "new tournament has to be pictured.", minimum=1, maximum=12),
         Field("max_pages", "int", "Journal requests limit", 200,
               "A safety limit, of 50 entries per request: a search stops by itself when it reaches "
               "tournaments an earlier search has already covered.", minimum=1, maximum=1000),
@@ -160,10 +154,6 @@ class EventsModule(BaseModule):
                 entry = known.get(f"{(t.tournament_key or '').split(':')[0]}|{t.ranking or ''}")
                 return entry["name"] if entry and entry.get("name") else ""
 
-            def has_picture(t: journal.Tournament) -> bool:
-                entry = known.get(f"{(t.tournament_key or '').split(':')[0]}|{t.ranking or ''}")
-                return bool(entry and entry.get("has_picture"))
-
             history = SentHistory(site)
             memory = SearchMemory(site)
             started = datetime.now()
@@ -175,14 +165,11 @@ class EventsModule(BaseModule):
             elif last is not None:
                 logger.info(f"Last complete search on {last:%d/%m/%Y %H:%M}: walking back {days} day(s) "
                             f"of the {days_back} configured.")
-            cards_per_page = int(self.options.get("cards_per_page", DEFAULT_CARDS_PER_PAGE))
             options = mapper.MapperOptions(max_pages=max(1, int(self.options.get("max_pages", 200))),
-                                           cards_per_page=cards_per_page, max_age_days=days)
-            screen = JournalScreen(self.ctx, JournalLayout(self.calibration, cards_per_page))
+                                           max_age_days=days)
             search = autosend.AutoSearch(
-                feed, screen.picture, collector, client, options,
+                feed, collector, client, options,
                 local_info=history.info, mark_sent=history.mark, catalogue_name=catalogue_name,
-                has_picture=has_picture,
                 client_version=CLIENT_VERSION, auto_publish=bool(self.options.get("auto_publish", True)),
                 on_log=logger.info, use_site_cutoff=not afresh,
             )

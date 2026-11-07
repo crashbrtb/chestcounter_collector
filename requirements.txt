@@ -6,11 +6,6 @@ requests>=2.31.0
 # The game's traffic is read as it arrives; some of it comes zstd-compressed.
 zstandard>=0.22.0
 
-# --- Image -------------------------------------------------------------------
-opencv-python>=4.8.0
-numpy>=1.24.0
-Pillow>=10.0.0
-
 # --- GUI ---------------------------------------------------------------------
 customtkinter>=5.2.0
 

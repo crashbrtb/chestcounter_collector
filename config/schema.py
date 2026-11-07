@@ -150,26 +150,6 @@ SECTIONS: List[Section] = [
             Field("action_delay", "float", "Delay between actions (s)", 0.35, "", minimum=0.0, maximum=10.0),
             Field("between_profiles_wait", "float", "Delay between profiles (s)", 3.0, "",
                   minimum=0.0, maximum=60.0),
-            Field("store_close_wait", "float", "Store close wait (s)", 15.0,
-                  "Time window in which the store is searched and closed before starting.",
-                  minimum=0.0, maximum=120.0),
-        ],
-    ),
-    Section(
-        "vision",
-        "Image Recognition",
-        "Button search using reference images saved during calibration.",
-        [
-            Field("match_threshold", "float", "Similarity threshold", 0.80,
-                  "Minimum correlation score to consider the image found.",
-                  minimum=0.3, maximum=1.0),
-            Field("scaled_threshold_relief", "float", "Scaled threshold relief", 0.06,
-                  "Threshold discount applied when the image is resized, since "
-                  "rescaling always slightly lowers correlation.",
-                  minimum=0.0, maximum=0.3),
-            Field("max_attempts", "int", "Search attempts", 3, "", minimum=1, maximum=20),
-            Field("retry_interval", "float", "Retry interval (s)", 0.4, "",
-                  minimum=0.0, maximum=10.0),
         ],
     ),
 ]

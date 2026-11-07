@@ -10,9 +10,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from config.settings import AccountConfig, ProfileConfig  # noqa: E402
 from core.runner import ModuleRunner, RunAlreadyActive, RunnerError  # noqa: E402
 from core.schedule import SCHEDULE_DAILY  # noqa: E402
-from fakes import Clock, FakeContext, make_calibration, make_config, make_schedule  # noqa: E402
+from fakes import Clock, FakeContext, make_config, make_schedule  # noqa: E402
 from modules.base_module import BaseModule  # noqa: E402
-from modules.chests import ChestCollector  # noqa: E402
 from modules.events import EventsModule  # noqa: E402
 from utils.run_lock import RunLock  # noqa: E402
 
@@ -44,13 +43,11 @@ class Scripted(BaseModule):
 
 class Chests(Scripted):
     key, title = "chests", "Clan chests"
-    required_steps = ChestCollector.required_steps
     configured_for = classmethod(lambda cls, profile: profile.has_database)
 
 
 class Events(Scripted):
     key, title = "events", "Tournament rankings"
-    required_steps = ("journal_button",)
     configured_for = classmethod(lambda cls, profile: EventsModule.configured_for(profile))
 
 
@@ -65,8 +62,8 @@ class RunnerTest(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def runner(self, complete=True):
-        self.ctx = FakeContext(self.config, make_calibration(self.tmp.name, self.config, complete))
+    def runner(self):
+        self.ctx = FakeContext(self.config)
         self.chests, self.events = Chests(self.ctx, self.log), Events(self.ctx, self.log)
         return ModuleRunner(self.ctx, [self.chests, self.events], make_schedule(self.tmp.name, self.clock),
                             lock_path=self.lock_path)
@@ -226,21 +223,22 @@ class RunnerTest(unittest.TestCase):
                          {(f["module"], f["profile"]) for f in summary["failures"]})
         self.assertEqual(1, self.ctx.browser.restarts, "a fresh browser for the retry")
 
-    def test_a_module_whose_screens_were_never_calibrated_is_left_out_and_the_rest_runs(self):
-        summary = self.runner(complete=False).run()
+    def test_a_module_with_preflight_problems_is_left_out_and_the_rest_runs(self):
+        runner = self.runner()
+        self.events.preflight = lambda _profiles: ["Incomplete configuration for 'Tournament rankings'."]
+        summary = runner.run()
 
         self.assertEqual([("chests", "Alpha"), ("chests", "Beta")], self.log)
         [failure] = summary["failures"]
         self.assertEqual("events", failure["module"])
-        self.assertIn("Incomplete calibration", failure["reason"])
-        self.assertIn("Journal button", failure["reason"])
+        self.assertIn("Incomplete configuration", failure["reason"])
 
     def test_a_run_that_cannot_start_says_why(self):
         runner = self.runner()
-        self.ctx.calibration.out_of_bounds = lambda: ["clan_button"]
+        self.config.window_problems = lambda *a: ["Two accounts share port 9322"]
         with self.assertRaises(RunnerError) as refused:
             runner.run()
-        self.assertIn("OUTSIDE the page", str(refused.exception))
+        self.assertIn("Two accounts share port 9322", str(refused.exception))
         self.assertEqual("Execution cannot start: " + str(refused.exception).split(": ", 1)[1],
                          self.chests.ended["error"], "the modules hear how the run ended")
         self.assertEqual(0, self.ctx.browser_starts)
@@ -255,14 +253,14 @@ class RunnerTest(unittest.TestCase):
         self.assertEqual([("", "Empty")], [(f["module"], f["profile"]) for f in summary["failures"]])
 
     def test_check_lists_what_is_wrong_before_running(self):
-        runner = self.runner(complete=False)
+        runner = self.runner()
+        self.events.preflight = lambda _profiles: ["Tournament rankings: missing token"]
         problems = runner.preflight()
         self.assertEqual(1, len(problems))
         self.assertIn("Tournament rankings", problems[0])
 
         self.config.set("modules.events", "enabled", False)
-        self.assertEqual([], ModuleRunner(FakeContext(self.config, self.ctx.calibration),
-                                          [self.chests]).preflight())
+        self.assertEqual([], ModuleRunner(FakeContext(self.config), [self.chests]).preflight())
 
 
 if __name__ == "__main__":
