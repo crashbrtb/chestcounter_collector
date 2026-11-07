@@ -1,3 +1,61 @@
+4.3.0 - The game's Tournaments window on the clan site.
+  - After the tournament search, the running tournaments and those starting within four days are read
+    over the network (routes 24001, 24201, 24003 and 38003; the rating service at rating-proxy) and
+    sent to the site with the clan's points and place, the best clans, the clan's players and the
+    rewards of each place (Table 44 of the static data). The site lists them, active then inactive.
+  - The game's own images (banners, icons, item icons) are read from its Unity CDN (UnityFS, LZ4,
+    RGBA32 -> PNG) and sent only when the site lacks them or the game changed them.
+  - The best clans are named by their own realm's server: the realms the game's page asks are
+    remembered (clan_directory.json), and a request to another realm no longer changes the session.
+  - Days to look back defaults to 45. 'tbcollector live-tournaments' writes the window to a file.
+
+4.2.0 - The clan's results in the tournaments, and publishing decided by the clan site.
+  - The tournament search reads the Journal card with the clans' ranking of each tournament: the
+    clan's place and points among the clans listed and what the clan received (the Trials of
+    Olympus and the Dark Omens list it; the others by the reward tiers of the place). The items are
+    named from the game's catalogue (Table 8; Table 12 for the rewards of a tier). They are sent to
+    the site (POST /clan-results) before the rankings; a site with none yet gets the last 45 days.
+  - The 'Close complete rankings on the site' setting is gone: each tournament of the site's
+    catalogue says whether its rankings are published without review. The collector still says
+    when every player has a name and the end date is known; nothing else is published.
+  - 'tbcollector journal-dump' writes the Journal's tournament cards and the clan's results, to
+    learn a new card's shape. It reads only.
+  - A tournament publishing on its own is held for review when a clan prize chosen to be split did not
+    come with it, or the clan's result has not arrived; the site tells its administrators.
+  - Tournament rankings client version 1.2.0.
+
+4.1.0 - A summary at the end of every log, and the schedule set from the interface.
+  - Every run ends its log with a RUN SUMMARY: the status (success, failures, cancelled, not started,
+    stopped by an error, nothing to do), the chests collected in total and per profile, each module's
+    outcome on each profile with the reason of a failure, what was not due, and every warning and
+    error of the run repeated in one place. It is written however the run ends.
+  - The Execution tab creates, updates and removes the 'TB Chest Collector' task in Windows Task
+    Scheduler, with the interval chosen (5 minutes to once a day) and an optional start time, shows
+    how it is scheduled, warns when it starts another folder's tbcollector.exe, and can start it now.
+
+4.0.0 - Rewritten in Rust: two executables, no Python, and a Windows installer.
+  - tbcollector.exe is what Windows Task Scheduler calls (it replaces run.bat and main.py, with the
+    same options: --check, --gui, --account, --profile, --module, --force, --keep-open, and the same
+    exit codes). tbcollector-config.exe is the configuration window (it replaces Configure.bat).
+  - The installer (TBChestCollector-Setup-<version>.exe) lets the folder be chosen, adds Start menu
+    shortcuts and can schedule an hourly run. Installing into the folder of an earlier version keeps
+    its config\config.json, module_state.json and module_data\ as they are: the formats did not change.
+  - Every module, the runner, the schedule, the login, the profile switch, the network link to the game
+    (requests and the Journal's socket), the chest and tournament catalogues from the CDN, the database
+    and the clan site client were ported as they were. The tournaments already sent keep their
+    signatures, so nothing is sent twice after the upgrade.
+  - tools/fix_chest_types.py and tools/audit_chest_types.py are 'tbcollector fix-chest-types' and
+    'tbcollector audit-chest-types'. Check_Environment.bat is 'tbcollector diagnose', which also tries
+    every profile's database and clan site.
+  - Removed: install.bat, the venv, the portable WinPython and requirements.txt; nothing has to be
+    installed besides Chrome. Removed what nothing called: the EventUploader import, JournalRepository
+    and insert_error.
+  - The database connection uses TLS when the server offers it, as mysql-connector did.
+  - A new tab is opened with PUT /json/new, which newer Chrome versions require.
+  - Tests: 163 unit tests ported from the Python suite, plus checks run by hand against the real CDN
+    (the catalogues decode as the Python version decoded them) and against a real Chrome talking to a
+    simulated game (cargo test --test cdp_game -- --ignored).
+
 Next  - Nothing reads the screen any more, and the calibration is gone with what was left of it.
   - A new tournament type goes to the site's catalogue without a picture. The walk no longer tries to
     picture it twice, nor asks the game for the top of the Journal to check that the places held.
