@@ -1,3 +1,10 @@
+Next  - The Triumphal Gifts tab is collected again. Since 3.0 its gifts (kind 2 in the game's list) were left
+    in the game. They are now written and opened over the network like the Gifts tab, and a new type of that
+    tab is pictured on it ('Triumphal gifts tab' step, back in the calibration as optional).
+  - Opening them this way was first tried on a real run: if the game refuses one or leaves it as it was, what
+    was written for it is taken back, the tab is left in the game until the next run, and the run reports it.
+    The Gifts tab goes on either way.
+
 Next  - New module, Shield of Peace: asks the game over the network when the city's shield ends and, with less
     than a day left ('Renew with less than', 24 hours by default), buys one with gold and activates it. Off until
     turned on per profile in Accounts and profiles > Modules.

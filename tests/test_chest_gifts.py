@@ -208,19 +208,22 @@ class Game:
         self.waiting = {gift.gift_id: gift for gift in map(parse_gift_row, rows)}
         self.opened = []
         self.refused = set()         # gifts refused and left in place
+        self.ignored = set()         # gifts the game says nothing against but leaves in place
         self.lost = set()            # gifts opened whose answer never came
         self.arrivals = []           # rows that appear after the next gift is opened
         self.lists_left = None       # how many more lists it answers
         self.names = {}              # the players it knows beyond the site's member list
         self.pictures = []           # the places of the list the panel was pictured at
+        self.picture_tabs = []       # the kind of gift (the tab) each picture was taken on
         self.camera = lambda position: b"png"
         self.log = []
 
     def player_names(self, player_ids):
         return {player: self.names[player] for player in player_ids if player in self.names}
 
-    def take_picture(self, position):
+    def take_picture(self, position, kind=1):
         self.pictures.append(position)
+        self.picture_tabs.append(kind)
         return self.camera(position)
 
     def gifts(self, _clan_id):
@@ -233,6 +236,8 @@ class Game:
     def open_gift(self, gift):
         if gift.gift_id in self.refused:
             raise GameLinkError("refused")
+        if gift.gift_id in self.ignored:
+            return
         del self.waiting[gift.gift_id]
         self.opened.append(gift.gift_id)
         for new in self.arrivals:
@@ -312,12 +317,62 @@ class Collection(unittest.TestCase):
         self.assertEqual([11], repo.gifts_written())
 
     def test_a_gift_of_an_unknown_kind_is_left_in_the_game(self):
-        game = Game([row(10, kind=2), row(11)])
+        game = Game([row(10, kind=3), row(11)])
 
         self.assertEqual((1, 0, True), self.collect(game, Repo()))
 
         self.assertEqual([11], game.opened)
         self.assertEqual([10], list(game.waiting))
+
+    # ------------------------------------------------------- the Triumphal Gifts tab
+    def test_a_triumphal_gift_is_written_and_opened_like_the_others(self):
+        game = Game([row(10), row(11, PIPO, SCORPION, quantity=3, kind=2), row(12)])
+        repo = Repo()
+
+        self.assertEqual((5, 0, True), self.collect(game, repo))
+
+        self.assertEqual([10, 11, 12], game.opened)
+        self.assertEqual([10, 11, 11, 11, 12], repo.gifts_written())
+
+    def test_a_new_triumphal_type_is_pictured_on_its_own_tab_at_its_place_there(self):
+        # Two plain chests come first in the list of gifts, but not on the Triumphal tab.
+        game = Game([row(10, chest_type=9998, quantity=2), row(11, chest_type=1155, quantity=3, kind=2)])
+        repo = Repo()
+        repo.in_review = {9998}
+
+        self.assertEqual((0, 5, True), self.collect(game, repo))
+
+        self.assertEqual([0], game.pictures)
+        self.assertEqual([2], game.picture_tabs)
+        self.assertEqual([(11, b"png"), (11, None), (11, None)],
+                         [(e["gift"], e["picture"]) for e in repo.incomplete if e["type"] == 1155])
+
+    def test_a_triumphal_gift_the_game_refuses_sets_the_tab_aside_and_the_gifts_tab_goes_on(self):
+        game = Game([row(10, kind=2), row(11), row(12, kind=2), row(13), row(14), row(15)])
+        game.refused = {10}
+        repo = Repo()
+        collection = GameCollection("Main / Alpha", repo, game, CLAN, 0, game.take_picture)
+
+        self.assertEqual((4, 0, False), collection.run())
+
+        self.assertEqual([11, 13, 14, 15], game.opened)
+        self.assertEqual([11, 13, 14, 15], repo.gifts_written())   # what was written for 10 was taken back
+        self.assertEqual([10, 12], list(game.waiting))
+        self.assertIn("Triumphal Gifts", collection.problem)
+
+    def test_a_triumphal_gift_the_game_leaves_as_it_was_is_taken_back_and_the_tab_set_aside(self):
+        game = Game([row(10, kind=2), row(11), row(12, kind=2)])
+        game.ignored = {10, 12}
+        repo = Repo()
+        collection = GameCollection("Main / Alpha", repo, game, CLAN, 0, game.take_picture)
+
+        collected, _incomplete, finished = collection.run()
+
+        self.assertFalse(finished)
+        self.assertEqual(1, collected)
+        self.assertEqual([11], repo.gifts_written())
+        self.assertEqual([10, 12], sorted(game.waiting))
+        self.assertIn("Triumphal Gifts", collection.problem)
 
     def test_a_player_the_site_does_not_know_is_named_by_the_game(self):
         game = Game([row(10, player=777)])

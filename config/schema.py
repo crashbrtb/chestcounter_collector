@@ -30,6 +30,9 @@ class Field:
     choices: Tuple[str, ...] = ()
     minimum: Optional[float] = None
     maximum: Optional[float] = None
+    # False keeps the parameter in config.json but out of the Parameters tab,
+    # for one that is really edited somewhere else (each account's own card).
+    in_parameters_tab: bool = True
 
     @property
     def is_secret(self) -> bool:
@@ -88,7 +91,7 @@ SECTIONS: List[Section] = [
             Field("first_cdp_port", "int", "First debugging port", 9322,
                   "Accounts without a port get the next free one from here. Each account's port is "
                   "shown, and can be changed, in Accounts and profiles.",
-                  minimum=1024, maximum=65535),
+                  minimum=1024, maximum=65535, in_parameters_tab=False),
             Field("game_url", "str", "Game URL", "https://totalbattle.com/en/",
                   "URL opened at the beginning of each account session."),
             Field("game_url_filter", "str", "Game tab URL filter", "totalbattle.com",
@@ -97,7 +100,8 @@ SECTIONS: List[Section] = [
                   "Empty = search for Chrome, Edge, and Brave in standard Windows paths."),
             Field("profiles_dir", "path", "Folder of Chrome profiles", "",
                   "Where new accounts get their Chrome folder. Empty = "
-                  "%USERPROFILE%/.total_battle_counter_profiles. An account that already has a folder keeps it."),
+                  "%USERPROFILE%/.total_battle_counter_profiles. An account that already has a folder keeps it.",
+                  in_parameters_tab=False),
             Field("reuse_existing", "bool", "Reuse open browser", True,
                   "If the account's window is already open, connects to it instead of restarting it. "
                   "A window of another folder on that port is never used."),

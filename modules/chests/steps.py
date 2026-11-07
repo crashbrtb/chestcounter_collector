@@ -1,6 +1,6 @@
 """
-The chest module's calibration steps: the way into the gifts panel and the three
-marks that describe one chest. They are only used to picture a chest type met for
+The chest module's calibration steps: the way into the gifts panel, the three
+marks that describe one chest, and the Triumphal Gifts tab. They are only used to picture a chest type met for
 the first time (screen.py); everything else goes over the network.
 
 They follow the shared steps (store, profiles) in the wizard, and are in the
@@ -33,5 +33,10 @@ STEPS = (
          "Mark only the button to open the chest, tightly.\n"
          "This image is the reference searched for each chest.\n"
          "It is never clicked: it only tells where each chest is on the panel."),
+    # Last, so the chest marks above are made on the Gifts tab, which always has chests.
+    Step("triumphal_gifts_tab", "click", "Triumphal gifts tab",
+         "Click the TRIUMPHAL GIFTS tab, next to Gifts.\n"
+         "Only used to picture a chest type of that tab met for the first time.",
+         optional=True, acts=True),
 )
 

@@ -243,13 +243,8 @@ Nothing is sent twice: the site keeps one event per game result, a published
 one is never sent again, and locally a ranking that did not change since it was
 sent is skipped (`config/module_data/events/`).
 
-**Coming from the standalone EventUploader?** The *Import from EventUploader*
-button on the module's card brings over its Journal calibration, the players'
-names it had collected and the list of tournaments it had already sent. The
-token is not imported (it lives in the Windows Credential Manager): paste it on
-the profile. If the Journal was calibrated at a different window size than the
-chests, the import says so — check each Journal step with *Test this step*.
-Once this module is running, disable the uploader's own scheduled task
+**Coming from the standalone EventUploader?** Calibrate the Journal steps and
+paste the site token on the profile, then disable the uploader's own scheduled task
 (`BuscarTorneios`): two programs driving the same game would get in each other's way.
 
 ### Adding a module

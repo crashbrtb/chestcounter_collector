@@ -42,6 +42,18 @@ While a picture of the type is waiting there, no other is taken.
 
 A type that cannot be pictured is left in the game for the next run, unless its gift
 is about to expire: then it goes to the review queue without one, rather than be lost.
+
+The two tabs
+------------
+The list carries the gifts of both tabs of the panel, Gifts and Triumphal Gifts,
+told apart by the gift's kind. Both are written and opened the same way. A picture
+is taken on the gift's own tab, at its place among the gifts of that tab.
+
+Opening a triumphal gift over the network was first tried on a real run, not
+measured beforehand. So the first one the game refuses, or leaves in the list as
+it was, sets the tab aside for the rest of the run: what was written for it is
+taken back, the others stay in the game for the next run, and the run says so -
+without stopping the Gifts tab.
 """
 
 import time
@@ -51,7 +63,7 @@ from utils.cancel import Cancelled, cancellation
 from utils.logger import logger
 
 from .game_link import GameLink, GameLinkError, pace
-from .gifts import PLAIN_GIFT, Gift
+from .gifts import KNOWN_KINDS, PLAIN_GIFT, TAB_NAMES, Gift
 
 # Opening stops after this many refusals in a row: the session is gone or the game
 # is not accepting them, and insisting would change neither.
@@ -73,13 +85,13 @@ class GameCollection:
     """The gifts of one clan, collected over the network. See the module's docstring."""
 
     def __init__(self, label: str, repo, link: GameLink, clan_id: int, interval: float,
-                 take_picture: Callable[[int], Optional[bytes]]):
+                 take_picture: Callable[[int, int], Optional[bytes]]):
         self.label = label                # the profile, for the log
         self.repo = repo
         self.link = link
         self.clan_id = clan_id
         self.interval = interval          # the least time between the start of two requests
-        self.take_picture = take_picture  # the panel, with the chest at a place of the list outlined
+        self.take_picture = take_picture  # (place in its tab, kind) -> a picture of that chest on the panel
 
         self.types: Dict[int, Tuple[str, str]] = repo.chest_types()
         self.players: Dict[int, str] = repo.game_players()
@@ -87,6 +99,7 @@ class GameCollection:
         self.collected = 0
         self.incomplete = 0
         self.warned_kinds = False
+        self.set_aside: Set[int] = set()            # kinds the game would not open this run, left in the game
         self.pictures: Dict[int, bytes] = {}        # type -> the picture its next chest is filed with
         self.in_review: Set[int] = repo.types_in_review()   # types whose picture is, or will be, in the queue
         self.unnamed: Set[int] = set()              # types that could not be pictured, left for the next run
@@ -103,6 +116,7 @@ class GameCollection:
             while True:
                 gifts = self.link.gifts(self.clan_id)
                 self._settle(attempted, gifts)
+                self._set_aside_unopened(attempted, gifts)
                 attempted = []
                 waiting = self._waiting(gifts)
                 self._name_players(gifts)
@@ -132,6 +146,10 @@ class GameCollection:
             return self.collected, self.incomplete, False
 
         logger.info(f"[{self.label}] {self.collected} collected, {self.incomplete} incomplete.")
+        if self.set_aside:
+            tabs = ", ".join(TAB_NAMES.get(kind, str(kind)) for kind in sorted(self.set_aside))
+            self.problem = f"the game did not open the gifts of the {tabs} tab over the network; they were left in it"
+            return self.collected, self.incomplete, False
         if self.unnamed:
             self.problem = f"chest types left unnamed in the game: {sorted(self.unnamed)}"
             return self.collected, self.incomplete, False
@@ -144,13 +162,30 @@ class GameCollection:
 
     def _waiting(self, gifts: List[Gift]) -> List[Gift]:
         """What can be opened: an expired gift stays listed until someone deletes it, and opens nothing."""
-        strange = [gift for gift in gifts if gift.kind != PLAIN_GIFT]
+        strange = [gift for gift in gifts if gift.kind not in KNOWN_KINDS]
         if strange and not self.warned_kinds:
             self.warned_kinds = True
             logger.warning(f"[{self.label}] {len(strange)} gift(s) of a kind not seen before were left in the "
                            f"game (e.g. {strange[0]}).")
         now = time.time()
-        return [gift for gift in gifts if gift.kind == PLAIN_GIFT and gift.expires_at > now]
+        return [gift for gift in gifts
+                if gift.kind in KNOWN_KINDS and gift.kind not in self.set_aside and gift.expires_at > now]
+
+    def _set_aside(self, gift: Gift, why: str) -> None:
+        """Leaves the gifts of a tab other than Gifts in the game for the rest of the run."""
+        if gift.kind in self.set_aside:
+            return
+        self.set_aside.add(gift.kind)
+        logger.warning(f"[{self.label}] The game {why} [gift {gift.gift_id}, tab {TAB_NAMES.get(gift.kind)}]: "
+                       f"the gifts of that tab are left in the game for the next run.")
+
+    def _set_aside_unopened(self, attempted: List[Gift], listed: List[Gift]) -> None:
+        """A triumphal gift asked to be opened and still listed as it was: the game does not open them this way."""
+        left = {gift.gift_id: gift for gift in listed}
+        for gift in attempted:
+            still = left.get(gift.gift_id)
+            if gift.kind != PLAIN_GIFT and still is not None and still.quantity >= gift.quantity:
+                self._set_aside(gift, "did not open a gift it was asked to")
 
     def _name_players(self, gifts: List[Gift]) -> None:
         unknown = sorted({gift.player_id for gift in gifts if gift.player_id not in self.players})
@@ -164,14 +199,14 @@ class GameCollection:
     def _picture_type(self, gift: Gift, listed: List[Gift]) -> None:
         """Pictures a new type on the panel for the review queue, or sets it aside when it cannot."""
         type_id = gift.chest_type
-        # The panel's lines: one for each chest, in the order of the gifts.
-        line = [item for item in listed if item.kind == PLAIN_GIFT for _ in range(item.quantity)]
+        # The lines of the gift's tab: one for each chest, in the order of the gifts.
+        line = [item for item in listed if item.kind == gift.kind for _ in range(item.quantity)]
         position = line.index(gift)
 
         for _ in range(PICTURE_ATTEMPTS):
             cancellation.check()
             try:
-                picture = self.take_picture(position)
+                picture = self.take_picture(position, gift.kind)
             except Cancelled:
                 raise
             except Exception as exc:  # noqa: BLE001 - the screen failing must not take the collection with it
@@ -202,6 +237,8 @@ class GameCollection:
         failures = 0
         for gift in waiting:
             cancellation.check()
+            if gift.kind in self.set_aside:
+                continue
             if not in_database.get(gift.gift_id) and gift.gift_id not in self.written:
                 self._write(gift)
 
@@ -211,6 +248,10 @@ class GameCollection:
                 self.link.open_gift(gift)
                 failures = 0
             except GameLinkError as exc:
+                if gift.kind != PLAIN_GIFT:
+                    # Taken back by the settling if it is still there; not counted against the Gifts tab.
+                    self._set_aside(gift, f"answered '{exc}' to opening a gift")
+                    continue
                 failures += 1
                 logger.warning(f"[{self.label}] Gift {gift.gift_id} was not opened: {exc} "
                                f"({failures}/{MAX_FAILURES}).")

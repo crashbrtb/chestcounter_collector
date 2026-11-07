@@ -20,6 +20,7 @@ its own that runs that module alone.
 """
 
 import queue
+import tkinter
 import logging
 import threading
 import webbrowser
@@ -68,6 +69,27 @@ def labelled_entry(parent, label: str, width: int, **options) -> ctk.CTkEntry:
     entry = ctk.CTkEntry(column, width=width, **options)
     entry.pack(anchor="w")
     return entry
+
+
+def fit_to_width(label: ctk.CTkLabel, margin: int = 4) -> ctk.CTkLabel:
+    """
+    Wraps the label's text at whatever width it is given, instead of a fixed one.
+
+    A fixed wraplength is right at one window size only: at a smaller one the end
+    of the line falls off the card, and the window had to be enlarged to read it.
+    The label has to be packed with fill="x" (or sticky="ew") for this to work.
+    """
+    def resize(event):
+        scaling = ctk.ScalingTracker.get_widget_scaling(label)
+        width = max(int(event.width / scaling) - margin, 60)
+        if abs(label.cget("wraplength") - width) > 2:
+            label.configure(wraplength=width)
+
+    # CTkLabel.bind goes to the text inside, whose width follows the wraplength
+    # set here, so each change would ask for another. The outer frame's width is
+    # the room the layout gives the label.
+    tkinter.Misc.bind(label, "<Configure>", resize, add="+")
+    return label
 
 
 class LogPipe(logging.Handler):
@@ -291,17 +313,20 @@ class ProfileRow(ctk.CTkFrame):
         self.name.insert(0, profile.name)
         self.name.pack(side="left", padx=4, pady=8)
 
-        self.lbl_database = ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=11),
-                                         text_color=MUTED, anchor="w", width=180)
-        self.lbl_database.pack(side="left", padx=8, fill="x", expand=True)
-
-        ctk.CTkButton(self, text="Database…", width=80, fg_color="#21262d",
-                      command=self._edit_database).pack(side="left", padx=4)
+        # The buttons are packed first, from the right, so a long description
+        # wraps in the room left over instead of pushing them off the card.
+        ctk.CTkButton(self, text="✕", width=32, fg_color="#21262d", hover_color=ERROR_COLOR,
+                      command=lambda: self.on_remove(self)).pack(side="right", padx=(4, 10))
         if any(module.profile_fields for module in MODULES):
             ctk.CTkButton(self, text="Modules…", width=80, fg_color="#21262d",
-                          command=self._edit_modules).pack(side="left", padx=4)
-        ctk.CTkButton(self, text="✕", width=32, fg_color="#21262d", hover_color=ERROR_COLOR,
-                      command=lambda: self.on_remove(self)).pack(side="left", padx=(4, 10))
+                          command=self._edit_modules).pack(side="right", padx=4)
+        ctk.CTkButton(self, text="Database…", width=80, fg_color="#21262d",
+                      command=self._edit_database).pack(side="right", padx=4)
+
+        self.lbl_database = fit_to_width(ctk.CTkLabel(self, text="", font=ctk.CTkFont(size=11),
+                                                      text_color=MUTED, anchor="w", justify="left",
+                                                      width=120))
+        self.lbl_database.pack(side="left", padx=8, pady=4, fill="x", expand=True)
 
         self._refresh_database_label()
 
@@ -400,22 +425,24 @@ class AccountCard(ctk.CTkFrame):
         self.cdp_port.insert(0, str(account.cdp_port or ""))
         ctk.CTkButton(second, text="Open window", width=0, fg_color="#21262d",
                       command=lambda: on_open_window(self)).pack(side="left", padx=6, pady=(17, 0))
-        ctk.CTkLabel(self,
-                     text="This account's own Chrome window. The folder keeps the session the game verified: the "
-                          "first login is by hand (Open window, then the code from the e-mail). Change the folder "
-                          "or the port only if they clash with something else; a new folder asks for a new code.",
-                     font=ctk.CTkFont(size=11), text_color=MUTED,
-                     wraplength=800, justify="left").pack(anchor="w", padx=18, pady=(4, 0))
+        fit_to_width(ctk.CTkLabel(self,
+                                  text="This account's own Chrome window. The folder keeps the session the game "
+                                       "verified: the first login is by hand (Open window, then the code from the "
+                                       "e-mail). Change the folder or the port only if they clash with something "
+                                       "else; a new folder asks for a new code.",
+                                  font=ctk.CTkFont(size=11), text_color=MUTED,
+                                  justify="left", anchor="w")).pack(fill="x", padx=18, pady=(4, 0))
 
-        ctk.CTkLabel(self, text="Profiles (cities) for this account, collected in this order:",
-                     font=ctk.CTkFont(size=11), text_color=MUTED).pack(anchor="w", padx=14, pady=(10, 2))
+        fit_to_width(ctk.CTkLabel(self, text="Profiles (cities) for this account, collected in this order:",
+                                  font=ctk.CTkFont(size=11), text_color=MUTED, justify="left", anchor="w")
+                     ).pack(fill="x", padx=14, pady=(10, 2))
 
         # Column names for the rows below, at the widths the rows themselves use.
         headings = ctk.CTkFrame(self, fg_color="transparent")
         headings.pack(fill="x", padx=12)
         for text, width, padding in (("Active", 28, (10, 4)),
-                                     ("Profile name (exactly as the game shows it)", 220, (4, 4)),
-                                     ("Database", 180, (8, 8))):
+                                     ("Profile name (as the game shows it)", 220, (4, 4)),
+                                     ("Database and modules", 180, (8, 8))):
             ctk.CTkLabel(headings, text=text, width=width, anchor="w",
                          font=ctk.CTkFont(size=11), text_color=MUTED).pack(side="left", padx=padding)
 
@@ -644,7 +671,8 @@ class App(ctk.CTk):
 
             self.widgets[section.key] = {}
             for spec in section.fields:
-                self._build_field(block, section.key, spec)
+                if spec.in_parameters_tab:
+                    self._build_field(block, section.key, spec)
 
     def _build_field(self, parent, section_key: str, spec):
         row = ctk.CTkFrame(parent, fg_color="transparent")

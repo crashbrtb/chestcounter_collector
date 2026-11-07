@@ -38,7 +38,7 @@ from config.settings import ProfileConfig
 from core.schedule import SCHEDULE_DAILY
 from utils.logger import logger
 
-from ..base_module import BaseModule, ModuleAction
+from ..base_module import BaseModule
 from . import autosend, journal, mapper
 from .api import ApiError, SiteClient, normalize_site_url
 from .layout import DEFAULT_CARDS_PER_PAGE, STEPS, JournalLayout
@@ -79,12 +79,6 @@ class EventsModule(BaseModule):
         Field("api_token", "password", "Site API token", "",
               "The uploader token created on that site. Each clan site has its own."),
     )
-    actions = (
-        ModuleAction("Import from EventUploader", "import_legacy",
-                     "Brings over what the standalone EventUploader saved on this computer: the Journal "
-                     "calibration, the players' names and the list of tournaments already sent."),
-    )
-
     # ---------------------------------------------------------- configuration
     @classmethod
     def site_of(cls, profile: ProfileConfig) -> Tuple[str, str]:
@@ -116,12 +110,6 @@ class EventsModule(BaseModule):
             return False, exc.describe()
         name = (me.get("user") or {}).get("name") or "?"
         return True, f"Connected to {site} as {name}."
-
-    @classmethod
-    def import_legacy(cls, config, calibration) -> str:
-        from .legacy import import_eventuploader
-
-        return import_eventuploader(config, calibration)
 
     def preflight(self, profiles: List[ProfileConfig]) -> List[str]:
         return [
