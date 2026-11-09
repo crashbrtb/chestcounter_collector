@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, Color32, RichText, Stroke};
 use serde_json::{json, Map, Value as Json};
 
 use crate::cancel::{escape_watcher, CANCELLATION};
@@ -31,15 +31,22 @@ use crate::runner::ModuleRunner;
 use crate::schedule::ModuleSchedule;
 use crate::task_scheduler::{self, TaskInfo};
 
-const ACCENT: Color32 = Color32::from_rgb(0x58, 0xa6, 0xff);
-const OK: Color32 = Color32::from_rgb(0x3f, 0xb9, 0x50);
-const WARN: Color32 = Color32::from_rgb(0xd2, 0x99, 0x22);
-const ERR: Color32 = Color32::from_rgb(0xf8, 0x51, 0x49);
-const MUTED: Color32 = Color32::from_rgb(0x8b, 0x94, 0x9e);
-const CARD: Color32 = Color32::from_rgb(0x1c, 0x20, 0x29);
-const DARK: Color32 = Color32::from_rgb(0x0d, 0x11, 0x17);
-const GREEN: Color32 = Color32::from_rgb(0x23, 0x86, 0x36);
+mod theme;
+
+use theme::{ACCENT, BG, BORDER, CARD, ERR, INPUT, MUTED, OK, PANEL, TEXT, TEXT_DIM, WARN};
+
 const MAX_LOG_LINES: usize = 5000;
+/// Width of the label column in front of every parameter.
+const LABEL_WIDTH: f32 = 210.0;
+
+/// The numbers the Execution page opens with.
+#[derive(Default)]
+struct Overview {
+    accounts: usize,
+    profiles: usize,
+    with_database: usize,
+    modules: Vec<String>,
+}
 
 #[derive(PartialEq, Clone, Copy)]
 enum Tab {
@@ -181,7 +188,7 @@ pub struct GuiApp {
     context: Arc<Mutex<Option<Arc<RealWindows>>>>,
     module_status: HashMap<&'static str, (String, Color32)>,
     status: (String, Color32),
-    info: String,
+    overview: Overview,
     /// The Task Scheduler entry: what there is, and the interval and start being chosen.
     task: Result<Option<TaskInfo>, String>,
     task_minutes: u32,
@@ -215,7 +222,7 @@ impl GuiApp {
             context: Arc::new(Mutex::new(None)),
             module_status: HashMap::new(),
             status: (String::new(), MUTED),
-            info: String::new(),
+            overview: Overview::default(),
             task: Ok(None),
             task_minutes: 60,
             task_start: String::new(),
@@ -284,14 +291,7 @@ impl GuiApp {
         } else {
             ("✖ No profile configured".into(), WARN)
         };
-        self.info = format!(
-            "Registered accounts: {}   ·   profiles: {} ({} with configured database)\nModules: {}\nConfiguration: {}",
-            accounts.len(),
-            profiles.len(),
-            collectable,
-            if summary.is_empty() { "none enabled".into() } else { summary.join(",  ") },
-            self.config.path.display()
-        );
+        self.overview = Overview { accounts: accounts.len(), profiles: profiles.len(), with_database: collectable, modules: summary };
     }
 
     fn refresh_task(&mut self) {
@@ -346,11 +346,12 @@ impl GuiApp {
         };
         let scheduled = matches!(self.task, Ok(Some(_)));
         Self::card(ui, |ui| {
-            ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("Windows Task Scheduler").strong());
-                ui.label(RichText::new(text).color(color));
-            });
             ui.horizontal(|ui| {
+                ui.label(theme::title("⏰  Windows Task Scheduler", 15.0));
+            });
+            theme::pill(ui, &text, color);
+            ui.add_space(2.0);
+            ui.horizontal_wrapped(|ui| {
                 ui.label("Run");
                 egui::ComboBox::from_id_salt("task_interval")
                     .selected_text(task_scheduler::describe_interval(self.task_minutes))
@@ -362,7 +363,7 @@ impl GuiApp {
                 ui.label("starting at");
                 ui.add(egui::TextEdit::singleline(&mut self.task_start).desired_width(50.0).hint_text("HH:MM"))
                     .on_hover_text("Time of day the runs count from, for instance 08:00. Empty: from now.");
-                if ui.button(if scheduled { "Update schedule" } else { "Schedule" }).clicked() {
+                if ui.add(theme::primary(if scheduled { "Update schedule" } else { "Schedule" }).min_size(egui::vec2(0.0, 28.0))).clicked() {
                     self.schedule_task();
                 }
                 if ui.add_enabled(scheduled, egui::Button::new("Remove")).clicked() {
@@ -574,108 +575,154 @@ impl GuiApp {
 
     // ----------------------------------------------------------- drawing
 
-    fn field(ui: &mut egui::Ui, spec: &Field, edit: &mut Edit) {
+    /// The input of one parameter. `salt` keeps equal fields apart: every module has a
+    /// "Runs" choice, and combo boxes sharing one id open and close in the same click.
+    fn widget(ui: &mut egui::Ui, salt: &str, spec: &Field, edit: &mut Edit, width: f32) {
+        match edit {
+            Edit::Flag(b) => {
+                theme::toggle(ui, b);
+            }
+            Edit::Text(t) if spec.kind == FieldType::Choice => {
+                egui::ComboBox::from_id_salt((salt, spec.key)).selected_text(t.clone()).width(width.min(220.0)).show_ui(ui, |ui| {
+                    for c in &spec.choices {
+                        ui.selectable_value(t, c.to_string(), *c);
+                    }
+                });
+            }
+            Edit::Text(t) => {
+                ui.add(egui::TextEdit::singleline(t).desired_width(width).margin(egui::vec2(8.0, 5.0)).password(spec.is_secret()));
+            }
+        }
+    }
+
+    fn field(ui: &mut egui::Ui, salt: &str, spec: &Field, edit: &mut Edit) {
         ui.horizontal(|ui| {
-            ui.allocate_ui_with_layout(egui::vec2(200.0, 20.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                ui.set_width(200.0);
-                ui.add(egui::Label::new(spec.label).wrap());
+            ui.allocate_ui_with_layout(egui::vec2(LABEL_WIDTH, 28.0), egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_width(LABEL_WIDTH);
+                ui.add(egui::Label::new(RichText::new(spec.label).color(TEXT_DIM)).wrap());
             });
-            match edit {
-                Edit::Flag(b) => {
-                    ui.checkbox(b, "");
-                }
-                Edit::Text(t) if spec.kind == FieldType::Choice => {
-                    egui::ComboBox::from_id_salt(spec.key.to_string() + spec.label).selected_text(t.clone()).width(170.0).show_ui(ui, |ui| {
-                        for c in &spec.choices {
-                            ui.selectable_value(t, c.to_string(), *c);
-                        }
-                    });
-                }
-                Edit::Text(t) => {
-                    ui.add(egui::TextEdit::singleline(t).desired_width(240.0).password(spec.is_secret()));
-                }
-            }
-            if !spec.help.is_empty() {
-                ui.add(egui::Label::new(RichText::new(spec.help).small().color(MUTED)).wrap());
-            }
+            Self::widget(ui, salt, spec, edit, 280.0);
         });
+        if !spec.help.is_empty() {
+            ui.add_space(-5.0);
+            ui.horizontal(|ui| {
+                ui.add_space(LABEL_WIDTH + ui.spacing().item_spacing.x);
+                ui.add(egui::Label::new(RichText::new(spec.help).small().color(MUTED)).wrap());
+            });
+        }
+        ui.add_space(2.0);
     }
 
     fn card<R>(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui) -> R) -> R {
-        egui::Frame::none().fill(CARD).rounding(8.0).inner_margin(12.0).show(ui, |ui| {
+        egui::Frame::none().fill(CARD).stroke(Stroke::new(1.0f32, BORDER)).rounding(10.0).inner_margin(16.0).show(ui, |ui| {
             ui.set_width(ui.available_width());
             add(ui)
         }).inner
     }
 
+    /// The title of a page, its actions on the right and a line saying what it is for.
+    fn page_header(ui: &mut egui::Ui, title: &str, subtitle: &str, actions: impl FnOnce(&mut egui::Ui)) {
+        ui.horizontal(|ui| {
+            ui.label(theme::title(title, 22.0));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), actions);
+        });
+        ui.add(egui::Label::new(RichText::new(subtitle).color(MUTED)).wrap());
+        ui.add_space(8.0);
+    }
+
+    fn stat(ui: &mut egui::Ui, label: &str, value: String, color: Color32) {
+        Self::card(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 2.0;
+            ui.label(RichText::new(label).small().color(MUTED));
+            ui.label(RichText::new(value).family(theme::semibold()).size(26.0).color(color));
+        });
+    }
+
     fn execution_tab(&mut self, ui: &mut egui::Ui) {
         let busy = self.busy.load(Ordering::SeqCst);
+        Self::page_header(ui, "Execution", "Open the game, check the setup, then run the enabled modules. The log below shows \
+                          everything a run does.", |ui| {
+            if ui.add_enabled(!busy, theme::success(if busy { "⏳  Running..." } else { "▶  Run now" })).clicked() {
+                self.confirm("Run now", "Run the enabled modules now with saved configuration?\n\nThe browser will be automated.",
+                             Action::RunAll);
+            }
+            let stop = theme::secondary(if self.stopping { "Stopping..." } else { "■  Stop" });
+            if ui.add_enabled(busy && self.stoppable && !self.stopping, stop).clicked() {
+                self.stop_run();
+            }
+            theme::toggle(ui, &mut self.force).on_hover_text("Run every enabled module now, even the ones not due yet");
+            ui.label(RichText::new("Ignore schedule").color(TEXT_DIM));
+        });
         ui.horizontal(|ui| {
-            if ui.add_enabled(!busy, egui::Button::new("1 · Open game in Chrome")).clicked() {
+            if ui.add_enabled(!busy, theme::secondary("1  ·  Open game in Chrome")).clicked() {
                 self.connect_browser();
             }
-            if ui.add_enabled(!busy, egui::Button::new("2 · Verify configuration")).clicked() {
+            if ui.add_enabled(!busy, theme::secondary("2  ·  Verify configuration")).clicked() {
                 self.check_configuration();
             }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let run = egui::Button::new(RichText::new(if busy { "⏳ Running..." } else { "▶ Run now" }).color(Color32::WHITE)).fill(GREEN);
-                if ui.add_enabled(!busy, run).clicked() {
-                    self.confirm("Run now", "Run the enabled modules now with saved configuration?\n\nThe browser will be automated.",
-                                 Action::RunAll);
-                }
-                let stop = egui::Button::new(if self.stopping { "stopping..." } else { "■ Stop" });
-                if ui.add_enabled(busy && self.stoppable && !self.stopping, stop).clicked() {
-                    self.stop_run();
-                }
-                ui.checkbox(&mut self.force, "Ignore schedule");
-            });
+            if busy {
+                ui.add_space(6.0);
+                ui.add(egui::Spinner::new().size(16.0).color(WARN));
+                ui.label(RichText::new(if self.stopping { "Stopping at the next safe point..." } else { "Working..." }).color(WARN));
+            }
         });
-        ui.add_space(6.0);
-        Self::card(ui, |ui| ui.label(RichText::new(&self.info).color(Color32::from_rgb(0xc9, 0xd1, 0xd9))));
-        ui.add_space(6.0);
+        ui.add_space(4.0);
+        let o = &self.overview;
+        ui.columns(4, |cols| {
+            Self::stat(&mut cols[0], "Accounts", o.accounts.to_string(), TEXT);
+            Self::stat(&mut cols[1], "Profiles", o.profiles.to_string(), TEXT);
+            Self::stat(&mut cols[2], "With a database", o.with_database.to_string(), if o.with_database > 0 { OK } else { WARN });
+            Self::stat(&mut cols[3], "Modules enabled", o.modules.len().to_string(), if o.modules.is_empty() { WARN } else { ACCENT });
+        });
+        let modules = if o.modules.is_empty() { "none enabled".to_string() } else { o.modules.join(",  ") };
+        ui.add(egui::Label::new(RichText::new(format!("Modules: {}", modules)).small().color(MUTED)).wrap());
+        ui.add_space(-4.0);
+        ui.add(egui::Label::new(RichText::new(format!("Configuration: {}", self.config.path.display())).small().color(MUTED)).wrap());
+        ui.add_space(4.0);
         self.scheduler_card(ui);
         ui.add_space(6.0);
-        ui.label(RichText::new("Execution Log").strong().color(MUTED));
-        let footer_height = 30.0;
-        let height = (ui.available_height() - footer_height).max(100.0);
-        egui::Frame::none().fill(DARK).inner_margin(6.0).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            egui::ScrollArea::vertical().max_height(height).stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
-                let log = self.log.lock().unwrap();
-                for (level, line) in log.iter() {
-                    let color = match level {
-                        Level::Error => ERR,
-                        Level::Warning => WARN,
-                        Level::Debug => MUTED,
-                        Level::Info => Color32::from_rgb(0xc9, 0xd1, 0xd9),
-                    };
-                    ui.label(RichText::new(line).monospace().size(11.5).color(color));
-                }
-            });
-        });
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Hold ESC to cancel an ongoing run from any window.  ·  Every run ends its log with a summary.")
-                .small().color(MUTED));
+            ui.label(theme::title("Execution log", 15.0));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Open logs folder").clicked() {
+                if ui.button("📂  Open logs folder").clicked() {
                     let dir = self.config.resolved_log_dir();
                     let _ = std::fs::create_dir_all(&dir);
                     let _ = std::process::Command::new("explorer").arg(dir).spawn();
                 }
             });
         });
+        let footer_height = 30.0;
+        let height = (ui.available_height() - footer_height - 20.0).max(120.0);
+        egui::Frame::none().fill(INPUT).stroke(Stroke::new(1.0f32, BORDER)).rounding(10.0).inner_margin(10.0).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            egui::ScrollArea::vertical().max_height(height).stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 2.0;
+                let log = self.log.lock().unwrap();
+                if log.is_empty() {
+                    ui.label(RichText::new("Nothing yet: the log of the next run appears here.").monospace().color(MUTED));
+                }
+                for (level, line) in log.iter() {
+                    let color = match level {
+                        Level::Error => ERR,
+                        Level::Warning => WARN,
+                        Level::Debug => MUTED,
+                        Level::Info => TEXT_DIM,
+                    };
+                    ui.label(RichText::new(line).monospace().color(color));
+                }
+            });
+        });
+        ui.label(RichText::new("Hold ESC to cancel an ongoing run from any window.  ·  Every run ends its log with a summary.")
+            .small().color(MUTED));
     }
 
     fn modules_tab(&mut self, ui: &mut egui::Ui) {
         let busy = self.busy.load(Ordering::SeqCst);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("What a run does. Each module is turned on or off here and runs on every profile that has what it \
-                                    needs (Accounts and profiles).").color(MUTED));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("💾 Save modules").clicked() {
-                    self.save_parameters();
-                }
-            });
+        Self::page_header(ui, "Modules", "What a run does. Each module is turned on or off here and runs on every profile that has \
+                          what it needs (Accounts and profiles).", |ui| {
+            if ui.add(theme::primary("💾  Save modules")).clicked() {
+                self.save_parameters();
+            }
         });
         let mut run: Option<Kind> = None;
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
@@ -683,26 +730,27 @@ impl GuiApp {
                 let section = kind.section();
                 Self::card(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new(kind.title()).size(16.0).strong().color(ACCENT));
+                        ui.label(theme::title(kind.title(), 17.0));
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            let b = egui::Button::new(RichText::new("▶ Run only this module").color(Color32::WHITE)).fill(GREEN);
-                            if ui.add_enabled(!busy, b).clicked() {
+                            if ui.add_enabled(!busy, theme::success("▶  Run only this module")).clicked() {
                                 run = Some(kind);
                             }
                         });
                     });
-                    ui.add(egui::Label::new(RichText::new(kind.description()).small().color(MUTED)).wrap());
+                    ui.add(egui::Label::new(RichText::new(kind.description()).color(MUTED)).wrap());
                     if let Some((text, color)) = self.module_status.get(kind.key()) {
-                        ui.label(RichText::new(text).small().color(*color));
+                        theme::pill(ui, text, *color);
                     }
-                    ui.add_space(4.0);
+                    ui.add_space(2.0);
+                    ui.separator();
+                    ui.add_space(2.0);
                     let edits = self.edits.entry(section.key.clone()).or_default();
                     for spec in &section.fields {
                         let edit = edits.entry(spec.key.to_string()).or_insert_with(|| edit_of(None, spec));
-                        Self::field(ui, spec, edit);
+                        Self::field(ui, &section.key, spec, edit);
                     }
                 });
-                ui.add_space(8.0);
+                ui.add_space(10.0);
             }
         });
         if let Some(kind) = run {
@@ -713,39 +761,39 @@ impl GuiApp {
     }
 
     fn parameters_tab(&mut self, ui: &mut egui::Ui) {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Parameters every module shares.").color(MUTED));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Restore defaults").clicked() {
-                    self.confirm("Restore defaults", "Reset all parameters to default values?\nAccounts and profiles are not affected.",
-                                 Action::RestoreDefaults);
-                }
-                if ui.button("💾 Save parameters").clicked() {
-                    self.save_parameters();
-                }
-            });
+        Self::page_header(ui, "Parameters", "Parameters every module shares.", |ui| {
+            if ui.add(theme::primary("💾  Save parameters")).clicked() {
+                self.save_parameters();
+            }
+            if ui.add(theme::secondary("Restore defaults")).clicked() {
+                self.confirm("Restore defaults", "Reset all parameters to default values?\nAccounts and profiles are not affected.",
+                             Action::RestoreDefaults);
+            }
         });
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
             for section in shared_sections() {
                 Self::card(ui, |ui| {
-                    ui.label(RichText::new(&section.label).size(16.0).strong().color(ACCENT));
-                    ui.add(egui::Label::new(RichText::new(&section.description).small().color(MUTED)).wrap());
-                    ui.add_space(4.0);
+                    ui.label(theme::title(section.label.as_str(), 17.0));
+                    ui.add(egui::Label::new(RichText::new(&section.description).color(MUTED)).wrap());
+                    ui.add_space(2.0);
+                    ui.separator();
+                    ui.add_space(2.0);
                     let edits = self.edits.entry(section.key.clone()).or_default();
                     for spec in section.fields.iter().filter(|f| f.in_parameters_tab) {
                         let edit = edits.entry(spec.key.to_string()).or_insert_with(|| edit_of(None, spec));
-                        Self::field(ui, spec, edit);
+                        Self::field(ui, &section.key, spec, edit);
                     }
                 });
-                ui.add_space(8.0);
+                ui.add_space(10.0);
             }
         });
     }
 
     fn labelled(ui: &mut egui::Ui, label: &str, width: f32, text: &mut String, hint: &str, password: bool) {
         ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
             ui.label(RichText::new(label).small().color(MUTED));
-            ui.add(egui::TextEdit::singleline(text).desired_width(width).hint_text(hint).password(password));
+            ui.add(egui::TextEdit::singleline(text).desired_width(width).margin(egui::vec2(8.0, 5.0)).hint_text(hint).password(password));
         });
     }
 
@@ -770,75 +818,90 @@ impl GuiApp {
 
     fn accounts_tab(&mut self, ui: &mut egui::Ui) {
         let mut save = false;
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("Each account is a game login; each profile is a city within it. Collection follows this order: \
-                                    account, then its profiles.").color(MUTED));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("+ New account").clicked() {
-                    let n = self.accounts.len() + 1;
-                    self.accounts.push(AccountEdit::of(&AccountConfig { name: format!("Account {}", n),
-                                                                        profiles: vec![ProfileConfig::default()], ..Default::default() }));
-                }
-                if ui.button("💾 Save accounts").clicked() {
-                    save = true;
-                }
-            });
+        let mut add = false;
+        Self::page_header(ui, "Accounts and profiles", "Each account is a game login; each profile is a city within it. Collection \
+                          follows this order: account, then its profiles.", |ui| {
+            if ui.add(theme::primary("💾  Save accounts")).clicked() {
+                save = true;
+            }
+            if ui.add(theme::secondary("+  New account")).clicked() {
+                add = true;
+            }
         });
+        if add {
+            let n = self.accounts.len() + 1;
+            self.accounts.push(AccountEdit::of(&AccountConfig { name: format!("Account {}", n), profiles: vec![ProfileConfig::default()],
+                                                                ..Default::default() }));
+        }
         let mut open_window = None;
         let mut remove = None;
         let mut open_db = None;
         let mut open_modules = None;
         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            if self.accounts.is_empty() {
+                Self::card(ui, |ui| {
+                    ui.label(RichText::new("No account yet. Press “+ New account” to add your game login.").color(MUTED));
+                });
+            }
             for (ai, account) in self.accounts.iter_mut().enumerate() {
                 Self::card(ui, |ui| {
                     ui.horizontal(|ui| {
-                        ui.vertical(|ui| {
-                            ui.label(RichText::new("Active").small().color(MUTED));
-                            ui.checkbox(&mut account.enabled, "");
+                        theme::toggle(ui, &mut account.enabled).on_hover_text("Active: an inactive account is skipped by the runs");
+                        let name = if account.name.trim().is_empty() { "Unnamed account".to_string() } else { account.name.trim().to_string() };
+                        ui.label(theme::title(name, 17.0));
+                        if !account.enabled {
+                            theme::pill(ui, "inactive", MUTED);
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.add(theme::danger("Remove account")).clicked() {
+                                remove = Some(ai);
+                            }
+                            if ui.button("Open window").on_hover_text("Opens this account's own Chrome window, to log in by hand").clicked() {
+                                open_window = Some(ai);
+                            }
                         });
-                        Self::labelled(ui, "Account name", 150.0, &mut account.name, "a name only you see", false);
-                        Self::labelled(ui, "Game login (email or username)", 200.0, &mut account.login, "what you type in the game", false);
+                    });
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        Self::labelled(ui, "Account name", 170.0, &mut account.name, "a name only you see", false);
+                        Self::labelled(ui, "Game login (email or username)", 230.0, &mut account.login, "what you type in the game", false);
                         ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 4.0;
                             ui.label(RichText::new("Password").small().color(MUTED));
                             ui.horizontal(|ui| {
-                                ui.add(egui::TextEdit::singleline(&mut account.password).desired_width(140.0)
+                                ui.add(egui::TextEdit::singleline(&mut account.password).desired_width(160.0).margin(egui::vec2(8.0, 5.0))
                                     .hint_text("game password").password(!account.show_password));
-                                if ui.button("👁").clicked() {
+                                if ui.button(if account.show_password { "🙈" } else { "👁" }).on_hover_text("Show or hide the password")
+                                    .clicked()
+                                {
                                     account.show_password = !account.show_password;
                                 }
                             });
                         });
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
-                            if ui.button(RichText::new("Remove account").color(ERR)).clicked() {
-                                remove = Some(ai);
-                            }
-                        });
                     });
-                    ui.horizontal(|ui| {
-                        Self::labelled(ui, "Chrome folder", 330.0, &mut account.browser_profile, "empty = chosen when saved", false);
-                        Self::labelled(ui, "Debugging port", 80.0, &mut account.port, "auto", false);
-                        ui.vertical(|ui| {
-                            ui.label("");
-                            if ui.button("Open window").clicked() {
-                                open_window = Some(ai);
-                            }
-                        });
+                    ui.horizontal_wrapped(|ui| {
+                        Self::labelled(ui, "Chrome folder", 360.0, &mut account.browser_profile, "empty = chosen when saved", false);
+                        Self::labelled(ui, "Debugging port", 90.0, &mut account.port, "auto", false);
                     });
                     ui.add(egui::Label::new(RichText::new("This account's own Chrome window. The folder keeps the session the game \
                         verified: the first login is by hand (Open window, then the code from the e-mail). Change the folder or the \
                         port only if they clash with something else; a new folder asks for a new code.").small().color(MUTED)).wrap());
                     ui.add_space(6.0);
-                    ui.label(RichText::new("Profiles (cities) for this account, collected in this order:").small().color(MUTED));
+                    ui.horizontal(|ui| {
+                        ui.label(theme::title("Profiles", 14.0));
+                        ui.label(RichText::new("cities of this account, collected in this order").small().color(MUTED));
+                    });
                     let mut remove_profile = None;
                     for (pi, profile) in account.profiles.iter_mut().enumerate() {
-                        egui::Frame::none().fill(DARK).rounding(6.0).inner_margin(6.0).show(ui, |ui| {
+                        egui::Frame::none().fill(INPUT).stroke(Stroke::new(1.0f32, BORDER)).rounding(8.0)
+                            .inner_margin(egui::Margin::symmetric(10.0, 8.0)).show(ui, |ui| {
                             ui.set_width(ui.available_width());
                             ui.horizontal(|ui| {
-                                ui.checkbox(&mut profile.enabled, "");
-                                ui.add(egui::TextEdit::singleline(&mut profile.name).desired_width(220.0)
+                                theme::toggle(ui, &mut profile.enabled).on_hover_text("Active: an inactive profile is skipped");
+                                ui.add(egui::TextEdit::singleline(&mut profile.name).desired_width(220.0).margin(egui::vec2(8.0, 5.0))
                                     .hint_text("Profile name as shown in the game"));
                                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                                    if ui.button(RichText::new("✖").color(ERR)).on_hover_text("Remove this profile").clicked() {
+                                    if ui.add(theme::danger("✖")).on_hover_text("Remove this profile").clicked() {
                                         remove_profile = Some(pi);
                                     }
                                     if ui.button("Modules…").clicked() {
@@ -852,16 +915,17 @@ impl GuiApp {
                                 });
                             });
                         });
-                        ui.add_space(3.0);
+                        ui.add_space(-2.0);
                     }
                     if let Some(pi) = remove_profile {
                         account.profiles.remove(pi);
                     }
-                    if ui.button("+ Add profile").clicked() {
+                    ui.add_space(2.0);
+                    if ui.button("+  Add profile").clicked() {
                         account.profiles.push(ProfileEdit { enabled: true, name: String::new(), database: None, modules: Map::new() });
                     }
                 });
-                ui.add_space(8.0);
+                ui.add_space(10.0);
             }
         });
         if let Some(i) = remove {
@@ -896,84 +960,102 @@ impl GuiApp {
         }
     }
 
+    fn dialog_window(title: impl Into<egui::WidgetText>) -> egui::Window<'static> {
+        egui::Window::new(title).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+    }
+
+    fn test_result(ui: &mut egui::Ui, shown: Option<(bool, String)>) {
+        if let Some((ok, text)) = shown {
+            theme::pill(ui, &format!("{}  {}", if ok { "✔" } else { "✖" }, text), if ok { OK } else { ERR });
+        }
+    }
+
+    /// A row of buttons aligned to the right, only as tall as the buttons.
+    fn button_row(ui: &mut egui::Ui, add: impl FnOnce(&mut egui::Ui)) {
+        ui.allocate_ui_with_layout(egui::vec2(ui.available_width(), 32.0), egui::Layout::right_to_left(egui::Align::Center), add);
+    }
+
     fn dialogs(&mut self, ctx: &egui::Context) {
         let Some(dialog) = self.dialog.as_mut() else { return };
+        // Dims the window behind, so the dialog is what one looks at.
+        ctx.layer_painter(egui::LayerId::new(egui::Order::PanelResizeLine, egui::Id::new("dialog-dim")))
+            .rect_filled(ctx.screen_rect(), 0.0, Color32::from_black_alpha(150));
         let mut close = false;
         let mut then: Option<Action> = None;
         match dialog {
             Dialog::Message { title, text, error } => {
-                egui::Window::new(title.as_str()).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                    .show(ctx, |ui| {
-                        ui.set_max_width(520.0);
-                        ui.label(RichText::new(text.as_str()).color(if *error { ERR } else { Color32::from_rgb(0xc9, 0xd1, 0xd9) }));
-                        ui.add_space(8.0);
-                        if ui.button("OK").clicked() {
+                Self::dialog_window(title.as_str()).show(ctx, |ui| {
+                    ui.set_max_width(520.0);
+                    ui.add(egui::Label::new(RichText::new(text.as_str()).color(if *error { ERR } else { TEXT_DIM })).wrap());
+                    ui.add_space(10.0);
+                    Self::button_row(ui, |ui| {
+                        if ui.add(theme::primary("OK").min_size(egui::vec2(80.0, 32.0))).clicked() {
                             close = true;
                         }
                     });
+                });
             }
             Dialog::Confirm { title, text, action } => {
-                egui::Window::new(title.as_str()).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                    .show(ctx, |ui| {
-                        ui.set_max_width(480.0);
-                        ui.label(text.as_str());
-                        ui.add_space(8.0);
-                        ui.horizontal(|ui| {
-                            if ui.button("Yes").clicked() {
-                                then = Some(action.clone());
-                                close = true;
-                            }
-                            if ui.button("No").clicked() {
-                                close = true;
-                            }
-                        });
+                Self::dialog_window(title.as_str()).show(ctx, |ui| {
+                    ui.set_max_width(480.0);
+                    ui.add(egui::Label::new(RichText::new(text.as_str()).color(TEXT_DIM)).wrap());
+                    ui.add_space(10.0);
+                    Self::button_row(ui, |ui| {
+                        if ui.add(theme::primary("Yes").min_size(egui::vec2(80.0, 32.0))).clicked() {
+                            then = Some(action.clone());
+                            close = true;
+                        }
+                        if ui.add(theme::secondary("No").min_size(egui::vec2(80.0, 32.0))).clicked() {
+                            close = true;
+                        }
                     });
+                });
             }
             Dialog::Database { account, profile, fields, test } => {
                 let name = self.accounts[*account].profiles[*profile].name.clone();
                 let mut result: Option<Option<DatabaseConfig>> = None;
-                egui::Window::new(format!("Database — {}", if name.is_empty() { "new profile" } else { &name }))
-                    .collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                    .show(ctx, |ui| {
-                        ui.label(RichText::new("Database credentials for this profile").strong().color(ACCENT));
-                        ui.label(RichText::new("A profile without a database is skipped during collection.").small().color(MUTED));
-                        ui.add_space(6.0);
-                        egui::Grid::new("db").num_columns(2).show(ui, |ui| {
-                            for (i, label) in ["Host", "Port", "User", "Password", "Database"].iter().enumerate() {
-                                ui.label(*label);
-                                ui.add(egui::TextEdit::singleline(&mut fields[i]).desired_width(280.0).password(i == 3));
-                                ui.end_row();
-                            }
-                        });
-                        let collect = |f: &[String; 5]| DatabaseConfig::from_json(&json!({"host": f[0].trim(), "port": f[1].trim(),
-                            "user": f[2].trim(), "password": f[3], "database": f[4].trim()})).unwrap_or_else(DatabaseConfig::new);
-                        let shown = test.lock().unwrap().clone();
-                        if let Some((ok, text)) = shown {
-                            ui.label(RichText::new(format!("{} {}", if ok { "✔" } else { "✖" }, text)).small().color(if ok { OK } else { ERR }));
+                Self::dialog_window(format!("Database — {}", if name.is_empty() { "new profile" } else { &name })).show(ctx, |ui| {
+                    ui.label(theme::title("Database credentials for this profile", 15.0));
+                    ui.label(RichText::new("A profile without a database is skipped during collection.").small().color(MUTED));
+                    ui.add_space(6.0);
+                    egui::Grid::new("db").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
+                        for (i, label) in ["Host", "Port", "User", "Password", "Database"].iter().enumerate() {
+                            ui.label(RichText::new(*label).color(TEXT_DIM));
+                            ui.add(egui::TextEdit::singleline(&mut fields[i]).desired_width(300.0).margin(egui::vec2(8.0, 5.0))
+                                .password(i == 3));
+                            ui.end_row();
                         }
-                        ui.horizontal(|ui| {
-                            if ui.button("Test connection").clicked() {
-                                let db = collect(fields);
-                                let slot = test.clone();
-                                *slot.lock().unwrap() = Some((true, "Testing...".into()));
-                                thread::spawn(move || {
-                                    let r = test_connection(&db);
-                                    *slot.lock().unwrap() = Some(r);
-                                });
-                            }
-                            if ui.button("Clear database").clicked() {
-                                result = Some(None);
-                            }
-                            if ui.button("Save").clicked() {
+                    });
+                    let collect = |f: &[String; 5]| DatabaseConfig::from_json(&json!({"host": f[0].trim(), "port": f[1].trim(),
+                        "user": f[2].trim(), "password": f[3], "database": f[4].trim()})).unwrap_or_else(DatabaseConfig::new);
+                    let shown = test.lock().unwrap().clone();
+                    Self::test_result(ui, shown);
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui.add(theme::secondary("Test connection")).clicked() {
+                            let db = collect(fields);
+                            let slot = test.clone();
+                            *slot.lock().unwrap() = Some((true, "Testing...".into()));
+                            thread::spawn(move || {
+                                let r = test_connection(&db);
+                                *slot.lock().unwrap() = Some(r);
+                            });
+                        }
+                        if ui.add(theme::danger("Clear database").min_size(egui::vec2(0.0, 32.0))).clicked() {
+                            result = Some(None);
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if ui.add(theme::primary("Save").min_size(egui::vec2(80.0, 32.0))).clicked() {
                                 let db = collect(fields);
                                 let any = db.is_usable() || !db.host.is_empty() || !db.user.is_empty() || !db.database.is_empty();
                                 result = Some(if any { Some(db) } else { None });
                             }
-                            if ui.button("Cancel").clicked() {
+                            if ui.add(theme::secondary("Cancel")).clicked() {
                                 close = true;
                             }
                         });
                     });
+                });
                 if let Some(db) = result {
                     self.accounts[*account].profiles[*profile].database = db;
                     close = true;
@@ -982,41 +1064,38 @@ impl GuiApp {
             Dialog::Modules { account, profile, values, tests } => {
                 let name = self.accounts[*account].profiles[*profile].name.clone();
                 let mut save = false;
-                egui::Window::new(format!("Modules — {}", if name.is_empty() { "new profile" } else { &name }))
-                    .collapsible(false).resizable(true).default_width(560.0).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                    .show(ctx, |ui| {
-                        ui.label(RichText::new("Module settings for this profile").strong().color(ACCENT));
-                        ui.add(egui::Label::new(RichText::new("Each profile belongs to one clan, so each one has its own values. A module \
-                                                               left empty here is not run on this profile.").small().color(MUTED)).wrap());
+                let max_height = ctx.screen_rect().height() * 0.65;
+                Self::dialog_window(format!("Modules — {}", if name.is_empty() { "new profile" } else { &name }))
+                    .default_width(600.0).show(ctx, |ui| {
+                    ui.set_width(600.0);
+                    ui.label(theme::title("Module settings for this profile", 15.0));
+                    ui.add(egui::Label::new(RichText::new("Each profile belongs to one clan, so each one has its own values. A module \
+                                                           left empty here is not run on this profile.").small().color(MUTED)).wrap());
+                    ui.add_space(4.0);
+                    egui::ScrollArea::vertical().max_height(max_height).auto_shrink([false, true]).show(ui, |ui| {
                         for kind in KINDS {
                             let fields = kind.profile_fields();
                             let Some(edits) = values.get_mut(kind.key()) else { continue };
                             Self::card(ui, |ui| {
-                                ui.label(RichText::new(kind.title()).strong().color(ACCENT));
+                                ui.label(theme::title(kind.title(), 15.0));
                                 for spec in &fields {
                                     let edit = edits.entry(spec.key.to_string()).or_insert_with(|| edit_of(None, spec));
                                     ui.horizontal(|ui| {
-                                        ui.allocate_ui_with_layout(egui::vec2(130.0, 20.0),
+                                        ui.allocate_ui_with_layout(egui::vec2(140.0, 28.0),
                                                                    egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                                            ui.set_width(130.0);
-                                            ui.label(spec.label);
+                                            ui.set_width(140.0);
+                                            ui.label(RichText::new(spec.label).color(TEXT_DIM));
                                         });
-                                        match edit {
-                                            Edit::Flag(b) => {
-                                                ui.checkbox(b, "");
-                                            }
-                                            Edit::Text(t) => {
-                                                ui.add(egui::TextEdit::singleline(t).desired_width(320.0).password(spec.is_secret()));
-                                            }
-                                        }
+                                        Self::widget(ui, kind.key(), spec, edit, 340.0);
                                     });
                                     if !spec.help.is_empty() {
+                                        ui.add_space(-5.0);
                                         ui.add(egui::Label::new(RichText::new(spec.help).small().color(MUTED)).wrap());
                                     }
                                 }
                                 if kind.can_test_profile() {
                                     let slot = tests[kind.key()].clone();
-                                    if ui.button("Test connection").clicked() {
+                                    if ui.add(theme::secondary("Test connection")).clicked() {
                                         let typed: Map<String, Json> =
                                             fields.iter().map(|f| (f.key.to_string(), coerce(&json_of(&edits[f.key]), Some(f)))).collect();
                                         *slot.lock().unwrap() = Some((true, "Testing...".into()));
@@ -1027,23 +1106,22 @@ impl GuiApp {
                                         });
                                     }
                                     let shown = slot.lock().unwrap().clone();
-                                    if let Some((ok, text)) = shown {
-                                        ui.label(RichText::new(format!("{} {}", if ok { "✔" } else { "✖" }, text)).small()
-                                            .color(if ok { OK } else { ERR }));
-                                    }
+                                    Self::test_result(ui, shown);
                                 }
                             });
-                            ui.add_space(4.0);
+                            ui.add_space(6.0);
                         }
-                        ui.horizontal(|ui| {
-                            if ui.button("Save").clicked() {
-                                save = true;
-                            }
-                            if ui.button("Cancel").clicked() {
-                                close = true;
-                            }
-                        });
                     });
+                    ui.add_space(6.0);
+                    Self::button_row(ui, |ui| {
+                        if ui.add(theme::primary("Save").min_size(egui::vec2(80.0, 32.0))).clicked() {
+                            save = true;
+                        }
+                        if ui.add(theme::secondary("Cancel")).clicked() {
+                            close = true;
+                        }
+                    });
+                });
                 if save {
                     let mut modules = self.accounts[*account].profiles[*profile].modules.clone();
                     for kind in KINDS {
@@ -1070,6 +1148,38 @@ impl GuiApp {
             self.apply(action);
         }
     }
+
+    fn sidebar(&mut self, ui: &mut egui::Ui, busy: bool) {
+        ui.horizontal(|ui| {
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::hover());
+            ui.painter().rect_filled(rect, 9.0, ACCENT);
+            ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "TB", egui::FontId::new(15.0, theme::semibold()),
+                              Color32::WHITE);
+            ui.vertical(|ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                ui.label(theme::title("Chest Collector", 16.0));
+                ui.label(RichText::new(format!("Total Battle  ·  v{}", crate::VERSION)).small().color(MUTED));
+            });
+        });
+        ui.add_space(20.0);
+        ui.spacing_mut().item_spacing.y = 4.0;
+        for (tab, icon, label) in [(Tab::Execution, "▶", "Execution"), (Tab::Modules, "📦", "Modules"), (Tab::Parameters, "⚙", "Parameters"),
+                                   (Tab::Accounts, "👤", "Accounts")] {
+            if theme::nav_item(ui, self.tab == tab, icon, label).clicked() {
+                self.tab = tab;
+            }
+        }
+        ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
+            ui.spacing_mut().item_spacing.y = 8.0;
+            theme::pill(ui, &self.status.0, self.status.1);
+            if busy {
+                ui.horizontal(|ui| {
+                    ui.add(egui::Spinner::new().size(14.0).color(WARN));
+                    ui.label(RichText::new(if self.stopping { "Stopping..." } else { "Run in progress" }).small().color(WARN));
+                });
+            }
+        });
+    }
 }
 
 impl eframe::App for GuiApp {
@@ -1080,30 +1190,19 @@ impl eframe::App for GuiApp {
             self.stopping = false;
             self.refresh_status();
         }
-        egui::TopBottomPanel::top("header").show(ctx, |ui| {
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("Total Battle Chest Collector").size(20.0).strong().color(ACCENT));
-                ui.label(RichText::new(format!("v{}", crate::VERSION)).small().color(MUTED));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label(RichText::new(&self.status.0).color(self.status.1));
-                });
+        egui::SidePanel::left("nav")
+            .resizable(false)
+            .exact_width(210.0)
+            .frame(egui::Frame::none().fill(PANEL).inner_margin(egui::Margin::symmetric(12.0, 18.0)))
+            .show(ctx, |ui| self.sidebar(ui, busy));
+        egui::CentralPanel::default()
+            .frame(egui::Frame::none().fill(BG).inner_margin(egui::Margin::symmetric(24.0, 20.0)))
+            .show(ctx, |ui| match self.tab {
+                Tab::Execution => self.execution_tab(ui),
+                Tab::Modules => self.modules_tab(ui),
+                Tab::Parameters => self.parameters_tab(ui),
+                Tab::Accounts => self.accounts_tab(ui),
             });
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                for (tab, label) in [(Tab::Execution, "Execution"), (Tab::Modules, "Modules"), (Tab::Parameters, "Parameters"),
-                                     (Tab::Accounts, "Accounts and profiles")] {
-                    ui.selectable_value(&mut self.tab, tab, RichText::new(label).size(14.0));
-                }
-            });
-            ui.add_space(4.0);
-        });
-        egui::CentralPanel::default().show(ctx, |ui| match self.tab {
-            Tab::Execution => self.execution_tab(ui),
-            Tab::Modules => self.modules_tab(ui),
-            Tab::Parameters => self.parameters_tab(ui),
-            Tab::Accounts => self.accounts_tab(ui),
-        });
         self.dialogs(ctx);
         ctx.request_repaint_after(Duration::from_millis(if busy { 150 } else { 500 }));
     }
@@ -1117,18 +1216,29 @@ impl eframe::App for GuiApp {
     }
 }
 
+/// The window's icon, decoded from the 256-pixel PNG built into the executable.
+fn window_icon() -> egui::IconData {
+    let decoder = png::Decoder::new(std::io::Cursor::new(&include_bytes!("../../assets/icon.png")[..]));
+    let mut reader = decoder.read_info().expect("the built-in icon is a valid PNG");
+    let mut rgba = vec![0; reader.output_buffer_size().expect("the built-in icon is small")];
+    let info = reader.next_frame(&mut rgba).expect("the built-in icon is a valid PNG");
+    rgba.truncate(info.buffer_size());
+    egui::IconData { rgba, width: info.width, height: info.height }
+}
+
 /// Opens the interface; returns the exit code once it is closed.
 pub fn launch(config: ConfigManager) -> i32 {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Total Battle Chest Collector — Configuration")
-            .with_inner_size([980.0, 700.0])
-            .with_min_inner_size([900.0, 520.0]),
+            .with_inner_size([1080.0, 700.0])
+            .with_min_inner_size([960.0, 560.0])
+            .with_icon(window_icon()),
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
     let result = eframe::run_native("Total Battle Chest Collector", options, Box::new(move |cc| {
-        cc.egui_ctx.set_visuals(egui::Visuals::dark());
+        theme::install(&cc.egui_ctx);
         Ok(Box::new(GuiApp::new(config)))
     }));
     match result {

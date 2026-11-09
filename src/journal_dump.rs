@@ -172,11 +172,19 @@ pub fn live(config: &ConfigManager, opts: &std::collections::HashMap<String, Str
             .map_err(crate::error::Error::Other)?;
         let api = window.game_link().ok_or_else(crate::link::not_started)?;
         let now = chrono::Utc::now().timestamp() as i128;
+        let schedule: Vec<serde_json::Value> = crate::modules::events::live::raw_schedule(api.as_ref())?
+            .iter()
+            .map(|r| {
+                let key = r.at(0).map(|k| format!("{}:{}", k.at(0).and_then(|v| v.py_int()).unwrap_or(0), k.at(1).and_then(|v| v.py_int()).unwrap_or(0)));
+                let name = key.as_ref().and_then(|k| catalog.tournaments.get(k)).map(|t| t.name.clone()).unwrap_or_default();
+                serde_json::json!({"key": key, "name": name, "row": format!("{:?}", r)})
+            })
+            .collect();
         let (clan, live, clans, names) = crate::modules::events::live::read(api.as_ref(), &catalog, now)?;
         let (body, images) = crate::modules::events::live::payload(clan, &live, &catalog, &clans, &names, now);
         let dir = crate::paths::base_dir().join("execution_logs");
         let path = dir.join(format!("live_tournaments_{}.json", chrono::Local::now().format("%Y%m%d_%H%M%S")));
-        let text = serde_json::to_string_pretty(&serde_json::json!({"payload": body, "images": images})).unwrap_or_default();
+        let text = serde_json::to_string_pretty(&serde_json::json!({"schedule": schedule, "payload": body, "images": images})).unwrap_or_default();
         std::fs::write(&path, text).map_err(|e| crate::error::Error::Other(e.to_string()))?;
         Ok(path.display().to_string())
     })();

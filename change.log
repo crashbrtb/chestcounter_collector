@@ -1,3 +1,13 @@
+4.3.2 - The announced tournaments on the clan site.
+  - Besides those starting within four days, the Tournaments window sent to the site carries the
+    tournaments the game announces ahead (show_before_announce: Trials of Olympus, Season's Legacy,
+    Dark Omens...) and the clan tournaments (Ragnarök), up to 120 days ahead, with their start.
+  - 'tbcollector live-tournaments' also writes the game's whole schedule (route 24001) as it came.
+
+4.3.1 - The application's icon.
+  - tbcollector.exe, tbcollector-config.exe, the configuration window and the installer show the
+    treasure chest logo (assets/icon.ico, made from assets/logo.png).
+
 4.3.0 - The game's Tournaments window on the clan site.
   - After the tournament search, the running tournaments and those starting within four days are read
     over the network (routes 24001, 24201, 24003 and 38003; the rating service at rating-proxy) and

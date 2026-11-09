@@ -2,7 +2,7 @@
 ; Built by build.ps1, which passes AppVersion from Cargo.toml and fills ..\dist first.
 
 #ifndef AppVersion
-  #define AppVersion "4.3.0"
+  #define AppVersion "4.3.2"
 #endif
 
 [Setup]
@@ -30,6 +30,7 @@ SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
+SetupIconFile=..\assets\icon.ico
 UninstallDisplayIcon={app}\tbcollector-config.exe
 UninstallDisplayName=Total Battle Chest Collector
 

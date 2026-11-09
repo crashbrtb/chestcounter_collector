@@ -43,6 +43,10 @@ const REWARD_TABLE: usize = 12;
 const ITEM_TABLE: usize = 8;
 /// How far ahead the waiting tournaments are listed, as the game's "Get ready".
 pub const UPCOMING_WITHIN: i128 = 4 * 86400;
+/// How far ahead the announced ones are listed: those the game shows before their
+/// start (`show_before_announce`: Trials of Olympus, Season's Legacy...) and the clan
+/// tournaments (Ragnarök), which come weeks apart.
+pub const ANNOUNCED_WITHIN: i128 = 120 * 86400;
 /// The best clans kept for the site.
 pub const TOP_CLANS: usize = 10;
 const CACHE_FORMAT: u32 = 2;
@@ -300,7 +304,8 @@ pub fn parse_schedule(rows: &[Value]) -> Vec<ScheduleRow> {
         .collect()
 }
 
-/// The running ones, and the ones starting within `UPCOMING_WITHIN` that the client knows.
+/// The running ones, the ones starting within `UPCOMING_WITHIN` that the client knows,
+/// and the announced ones starting within `ANNOUNCED_WITHIN`.
 pub fn listed(schedule: &[ScheduleRow], catalog: &LiveCatalog, now: i128) -> Vec<ScheduleRow> {
     let mut out: Vec<ScheduleRow> = schedule
         .iter()
@@ -315,7 +320,8 @@ pub fn listed(schedule: &[ScheduleRow], catalog: &LiveCatalog, now: i128) -> Vec
             if r.running {
                 r.at > now
             } else {
-                r.at > now && r.at - now <= UPCOMING_WITHIN
+                let announced = info.show_before.is_some() || !info.clan_tiers.is_empty();
+                r.at > now && r.at - now <= if announced { ANNOUNCED_WITHIN } else { UPCOMING_WITHIN }
             }
         })
         .cloned()
@@ -344,6 +350,13 @@ fn answer(frames: &[crate::tbcodec::Frame], route: i128) -> Vec<Value> {
     frames.iter().find(|f| f.route == Some(route)).map(first_rows).unwrap_or_default()
 }
 
+/// The rows of route 24001 as the game sends them.
+pub fn raw_schedule(api: &dyn GameApi) -> Res<Vec<Value>> {
+    let (me, clan, kingdom) = identity(api)?;
+    let who = crate::arr![crate::arr![me], crate::arr![clan.unwrap_or(0)], kingdom.unwrap_or(0)];
+    Ok(answer(&api.call_rating(SCHEDULE_ROUTE, crate::arr![who, crate::arr![]])?, SCHEDULE_ROUTE))
+}
+
 /// A running or waiting tournament as the game shows it to this clan.
 #[derive(Debug, Clone, Default)]
 pub struct LiveTournament {
@@ -361,7 +374,7 @@ pub struct LiveTournament {
 pub fn read(api: &dyn GameApi, catalog: &LiveCatalog, now: i128) -> Res<(Option<i128>, Vec<LiveTournament>, HashMap<i128, (String, String)>, HashMap<i128, String>)> {
     let (me, clan, kingdom) = identity(api)?;
     let who = crate::arr![crate::arr![me], crate::arr![clan.unwrap_or(0)], kingdom.unwrap_or(0)];
-    let schedule = parse_schedule(&answer(&api.call_rating(SCHEDULE_ROUTE, crate::arr![who.clone(), crate::arr![]])?, SCHEDULE_ROUTE));
+    let schedule = parse_schedule(&raw_schedule(api)?);
     let rows = listed(&schedule, catalog, now);
     let running: Vec<&ScheduleRow> = rows.iter().filter(|r| r.running).collect();
 
@@ -727,6 +740,10 @@ mod tests {
         let mut c = LiveCatalog::default();
         c.tournaments.insert("1026:1".into(), TournamentInfo { name: "Ragnarök".into(), banner: "banner_ragnarok_clan_event_708x123".into(),
             icon: "map_ragnarok_widget_62".into(), clan_tiers: vec![(1, vec![10, 11]), (3, vec![12])], ..Default::default() });
+        c.tournaments.insert("1026:2".into(), TournamentInfo { name: "Ragnarök".into(), banner: "banner_ragnarok_clan_event_708x123".into(),
+            clan_tiers: vec![(1, vec![10])], ..Default::default() });
+        c.tournaments.insert("1032:1".into(), TournamentInfo { name: "Trials of Olympus".into(), banner: "banner_multistage_main_708x123".into(),
+            show_before: Some(1), ..Default::default() });
         c.tournaments.insert("1007:1".into(), TournamentInfo { name: "Doomsday".into(), banner: "banner_doomsday".into(), ..Default::default() });
         c.tournaments.insert("1005:1".into(), TournamentInfo { name: "".into(), banner: "x".into(), ..Default::default() });
         c.tournaments.insert("1034:2".into(), TournamentInfo { name: "Ariadne's Thread".into(), banner: "b".into(), hide_if_unavailable: true,
@@ -808,13 +825,16 @@ mod tests {
             arr![arr![1005, 1], 6, 2, 4294967295i64, false, 1, 0, 1702760423],
             arr![arr![9999, 1], 1, 1, NOW + 10, false, 1, 0, NOW],
             arr![arr![1034, 2], 9, 2, NOW + 3600, false, 1, 0, NOW],
+            arr![arr![1026, 2], 57, 2, NOW + 21 * 86400, false, 1, 0, NOW],
+            arr![arr![1032, 1], 9, 2, NOW + 15 * 86400, false, 1, 0, NOW],
+            arr![arr![1032, 1], 9, 2, NOW + 200 * 86400, false, 1, 0, NOW],
         ];
         let schedule = parse_schedule(&rows);
         assert_eq!(ScheduleRow { game_type: 1026, variant: 1, run: 56, running: true, at: NOW + 91080, changed: NOW - 81720 }, schedule[0]);
         let shown = listed(&schedule, &catalog(), NOW);
-        assert_eq!(vec![("1026:1".to_string(), true), ("1007:1".to_string(), false)],
+        assert_eq!(vec![("1026:1".to_string(), true), ("1007:1".to_string(), false), ("1032:1".to_string(), false), ("1026:2".to_string(), false)],
                    shown.iter().map(|r| (key_of(r.game_type, r.variant), r.running)).collect::<Vec<_>>(),
-                   "running first; a start a month away, a nameless one, an unknown type and one only an A/B group of the game can join are left out");
+                   "running first; the announced ones and the clan tournaments weeks ahead are listed; an ordinary one a month away,                     anything beyond four months, a nameless one, an unknown type and one only an A/B group of the game can join are left out");
     }
 
     #[test]
